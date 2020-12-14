@@ -34,7 +34,6 @@ include $(srctree)/techpack/audio/config/lahaina_gtact4pro.conf
 else
 include $(srctree)/techpack/audio/config/lahainaauto.conf
 endif
-export
 endif
 ifeq ($(CONFIG_ARCH_HOLI), y)
 include $(srctree)/techpack/audio/config/holiauto.conf
