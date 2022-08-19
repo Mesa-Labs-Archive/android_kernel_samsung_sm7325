@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-only
 config SENSORS_SSC
-	bool "Enable Sensors Driver Support for SSC"
+	tristate "Enable Sensors Driver Support for SSC"
 	help
 	  Add support for sensors SSC driver.
 	  This driver is used for exercising sensors use case,
@@ -188,7 +188,6 @@ config SENSORS_A96T3X6_BLOCK_SAR_ONLY
 config SENSORS_A96T365IF
 	bool "Choose A96T365IF"
 	default n
-	help
 
 config SENSORS_A96T3X6_UNSUPPORT_OTG
 	depends on I2C
