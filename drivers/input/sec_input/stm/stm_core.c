@@ -2766,7 +2766,7 @@ void stm_ts_release(struct stm_ts_data *ts)
 int stm_ts_probe(struct stm_ts_data *ts)
 {
 	int ret = 0;
-#if IS_MODULE(CONFIG_TOUCHSCREEN_STM) || IS_MODULE(CONFIG_TOUCHSCREEN_STM_SPI)
+#if 0
 	static int deferred_flag = 0;
 
 	if (!deferred_flag) {
