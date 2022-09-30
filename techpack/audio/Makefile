@@ -19,17 +19,17 @@ ifeq ($(CONFIG_ARCH_KONA), y)
 include $(srctree)/techpack/audio/config/konaauto.conf
 endif
 ifeq ($(CONFIG_ARCH_LAHAINA), y)
-ifeq ($(PROJECT_NAME),$(filter $(PROJECT_NAME),a52sxq))
+ifeq ($(CONFIG_SEC_A52SXQ_PROJECT), y)
 include $(srctree)/techpack/audio/config/lahaina_a52s.conf
-else ifeq ($(PROJECT_NAME),$(filter $(PROJECT_NAME),m52xq))
+else ifeq ($(CONFIG_SEC_M52XQ_PROJECT), y)
 include $(srctree)/techpack/audio/config/lahaina_m52.conf
-else ifeq ($(PROJECT_NAME),$(filter $(PROJECT_NAME),a73xq))
+else ifeq ($(CONFIG_SEC_A73XQ_PROJECT), y)
 include $(srctree)/techpack/audio/config/lahaina_a73.conf
-else ifeq ($(PROJECT_NAME),$(filter $(PROJECT_NAME),gts7fewifi))
+else ifeq ($(CONFIG_SEC_GTS7FEWIFI_PROJECT), y)
 include $(srctree)/techpack/audio/config/lahaina_gts7fe.conf
-else ifeq ($(PROJECT_NAME),$(filter $(PROJECT_NAME),xcoverpro2))
+else ifeq ($(CONFIG_SEC_XCOVERPRO2_PROJECT), y)
 include $(srctree)/techpack/audio/config/lahaina_xcoverpro2.conf
-else ifeq ($(PROJECT_NAME),$(filter $(PROJECT_NAME),gtact4pro gtact4prowifi))
+else ifneq ($(filter y,$(CONFIG_SEC_GTACT4PRO_PROJECT) $(CONFIG_SEC_GTACT4PROWIFI_PROJECT)),)
 include $(srctree)/techpack/audio/config/lahaina_gtact4pro.conf
 else
 include $(srctree)/techpack/audio/config/lahainaauto.conf
@@ -82,22 +82,22 @@ LINUXINCLUDE    += \
                 -include $(srctree)/techpack/audio/config/konaautoconf.h
 endif
 ifeq ($(CONFIG_ARCH_LAHAINA), y)
-ifeq ($(PROJECT_NAME),$(filter $(PROJECT_NAME),a52sxq))
+ifeq ($(CONFIG_SEC_A52SXQ_PROJECT), y)
 LINUXINCLUDE    += \
                 -include $(srctree)/techpack/audio/config/lahaina_a52s.h
-else ifeq ($(PROJECT_NAME),$(filter $(PROJECT_NAME),m52xq))
+else ifeq ($(CONFIG_SEC_M52XQ_PROJECT), y)
 LINUXINCLUDE    += \
                 -include $(srctree)/techpack/audio/config/lahaina_m52.h
-else ifeq ($(PROJECT_NAME),$(filter $(PROJECT_NAME),a73xq))
+else ifeq ($(CONFIG_SEC_A73XQ_PROJECT), y)
 LINUXINCLUDE    += \
                 -include $(srctree)/techpack/audio/config/lahaina_a73.h
-else ifeq ($(PROJECT_NAME),$(filter $(PROJECT_NAME),gts7fewifi))
+else ifeq ($(CONFIG_SEC_GTS7FEWIFI_PROJECT), y)
 LINUXINCLUDE    += \
                 -include $(srctree)/techpack/audio/config/lahaina_gts7fe.h
-else ifeq ($(PROJECT_NAME),$(filter $(PROJECT_NAME),xcoverpro2))
+else ifeq ($(CONFIG_SEC_XCOVERPRO2_PROJECT), y)
 LINUXINCLUDE    += \
                 -include $(srctree)/techpack/audio/config/lahaina_xcoverpro2.h
-else ifeq ($(PROJECT_NAME),$(filter $(PROJECT_NAME),gtact4pro gtact4prowifi))
+else ifneq ($(filter y,$(CONFIG_SEC_GTACT4PRO_PROJECT) $(CONFIG_SEC_GTACT4PROWIFI_PROJECT)),)
 LINUXINCLUDE    += \
                 -include $(srctree)/techpack/audio/config/lahaina_gtact4pro.h
 else
