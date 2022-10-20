@@ -13,6 +13,9 @@ enum {
 	SLV_BOLERO_EVT_RX_PA_GAIN_UPDATE,
 	SLV_BOLERO_EVT_HPHL_HD2_ENABLE, /* to enable hd2 config for hphl */
 	SLV_BOLERO_EVT_HPHR_HD2_ENABLE, /* to enable hd2 config for hphr */
+#ifdef CONFIG_SND_SOC_IMPED_SENSING
+	SEC_WCD_BOLERO_EVT_IMPED_TRUE = 100,	/* for SEC imped true */
+#endif
 };
 
 /* from bolero to SLV events */

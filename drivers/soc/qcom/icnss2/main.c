@@ -51,6 +51,9 @@
 #include "power.h"
 #include "genl.h"
 
+#include <linux/of_gpio.h>
+#include <linux/gpio.h>
+
 #define MAX_PROP_SIZE			32
 #define NUM_LOG_PAGES			10
 #define NUM_LOG_LONG_PAGES		4
@@ -108,6 +111,25 @@ static const char * const icnss_pdr_cause[] = {
 	[ICNSS_ROOT_PD_SHUTDOWN] = "Root PD shutdown",
 	[ICNSS_HOST_ERROR] = "Host error",
 };
+
+#ifdef CONFIG_SEC_SS_CNSS_FEATURE_SYSFS
+/**
+ * enum driver_status: Driver Modules status
+ * @DRIVER_MODULES_UNINITIALIZED: Driver CDS modules uninitialized
+ * @DRIVER_MODULES_ENABLED: Driver CDS modules opened
+ * @DRIVER_MODULES_CLOSED: Driver CDS modules closed
+ */
+enum driver_modules_status {
+	DRIVER_MODULES_UNINITIALIZED,
+	DRIVER_MODULES_ENABLED,
+	DRIVER_MODULES_CLOSED
+};
+
+enum driver_modules_status current_driver_status = DRIVER_MODULES_UNINITIALIZED;
+char ver_info[512] = {0,};
+char softap_info[512] = {0,};
+#define MACLOADER_TIMEOUT                 10000
+#endif /* CONFIG_SEC_SS_CNSS_FEATURE_SYSFS */
 
 static void icnss_set_plat_priv(struct icnss_priv *priv)
 {
@@ -595,6 +617,13 @@ static int icnss_driver_event_server_arrive(struct icnss_priv *priv,
 
 	if (!priv)
 		return -ENODEV;
+
+#ifdef CONFIG_SEC_SS_CNSS_FEATURE_SYSFS
+	if (!wait_for_completion_timeout(
+			&priv->macloader_done,
+			msecs_to_jiffies(MACLOADER_TIMEOUT)))
+		icnss_pr_info("macloader_done timeout\n");
+#endif /* CONFIG_SEC_SS_CNSS_FEATURE_SYSFS */
 
 	set_bit(ICNSS_WLFW_EXISTS, &priv->state);
 	clear_bit(ICNSS_FW_DOWN, &priv->state);
@@ -1307,7 +1336,8 @@ static int icnss_driver_event_pd_service_down(struct icnss_priv *priv,
 	if (priv->force_err_fatal)
 		ICNSS_ASSERT(0);
 
-	if (priv->device_id == WCN6750_DEVICE_ID) {
+	if (priv->device_id == WCN6750_DEVICE_ID &&
+	    !IS_ERR(priv->smp2p_info.smem_state)) {
 		priv->smp2p_info.seq = 0;
 		if (qcom_smem_state_update_bits(
 				priv->smp2p_info.smem_state,
@@ -3450,6 +3480,246 @@ static DEVICE_ATTR_WO(qdss_conf_download);
 static DEVICE_ATTR_WO(hw_trc_override);
 static DEVICE_ATTR_WO(wpss_boot);
 static DEVICE_ATTR_WO(wlan_en_delay);
+#ifdef CONFIG_SEC_SS_CNSS_FEATURE_SYSFS
+void cnss_sysfs_update_driver_status(int32_t new_status, void *version, void *softap)
+{
+	if (new_status == DRIVER_MODULES_ENABLED) {
+		memcpy(ver_info, version, 512);
+		memcpy(softap_info, softap, 512);
+	}
+	current_driver_status = new_status;
+}
+EXPORT_SYMBOL(cnss_sysfs_update_driver_status);
+
+#define MAC_ADDR_SIZE 6
+uint8_t mac_from_macloader[MAC_ADDR_SIZE] = {0,0,0,0,0,0};
+int pm_from_macloader = 0;
+int ant_from_macloader = 0;
+
+extern int cnss_utils_set_wlan_mac_address(const u8 *mac_list, const uint32_t len);
+static ssize_t store_mac_addr(struct kobject *kobj,
+			    struct kobj_attribute *attr,
+			    const char *buf,
+			    size_t count)
+{
+
+	if (!penv)
+		return count;
+
+	sscanf(buf, "%02hhx:%02hhx:%02hhx:%02hhx:%02hhx:%02hhx",
+		(const u8*)&mac_from_macloader[0],
+		(const u8*)&mac_from_macloader[1],
+		(const u8*)&mac_from_macloader[2],
+		(const u8*)&mac_from_macloader[3],
+		(const u8*)&mac_from_macloader[4],
+		(const u8*)&mac_from_macloader[5]);
+
+	icnss_pr_info("Assigning MAC from Macloader %02hhx:%02hhx:%02hhx:%02hhx:%02hhx:%02hhx\n",
+		mac_from_macloader[0], mac_from_macloader[1],mac_from_macloader[2],
+		mac_from_macloader[3], mac_from_macloader[4],mac_from_macloader[5]);
+
+	cnss_utils_set_wlan_mac_address(mac_from_macloader, MAC_ADDR_SIZE);
+	complete(&penv->macloader_done);
+
+	return count;
+}
+
+static ssize_t show_verinfo(struct kobject *kobj,
+				 struct kobj_attribute *attr,
+				 char *buf)
+{
+	return scnprintf(buf, 512, "%s", ver_info);
+}
+static ssize_t show_softapinfo(struct kobject *kobj,
+				 struct kobj_attribute *attr,
+				 char *buf)
+{
+	return scnprintf(buf, 512, "%s", softap_info);
+}
+
+static ssize_t show_qcwlanstate(struct kobject *kobj,
+                                struct kobj_attribute *attr,
+                                char *buf)
+{
+       char status[20];
+       static const char wlan_off_str[] = "OFF";
+       static const char wlan_on_str[] = "ON";
+
+       switch (current_driver_status) {
+               case DRIVER_MODULES_UNINITIALIZED:
+               case DRIVER_MODULES_CLOSED:
+                       icnss_pr_info("Modules not initialized just return");
+                       memset(status, '\0', sizeof("OFF"));
+                       memcpy(status, wlan_off_str, sizeof("OFF"));
+                       break;
+               case DRIVER_MODULES_ENABLED:
+                       icnss_pr_info("Modules enabled");
+                       memset(status, '\0', sizeof("ON"));
+                       memcpy(status, wlan_on_str, sizeof("ON"));
+                       break;
+       }
+
+       return scnprintf(buf, PAGE_SIZE, "%s", status);
+}
+
+static ssize_t store_pm_info(struct kobject *kobj,
+			    struct kobj_attribute *attr,
+			    const char *buf,
+			    size_t count)
+{
+	icnss_pr_info("%s enter\n", __func__);
+	sscanf(buf, "%d", &pm_from_macloader);
+	pm_from_macloader = !pm_from_macloader;
+	icnss_pr_info("pm_from_macloader %d\n", pm_from_macloader);
+
+	return count;
+}
+
+int cnss_sysfs_get_pm_info(void)
+{
+	return pm_from_macloader;
+}
+EXPORT_SYMBOL(cnss_sysfs_get_pm_info);
+
+static ssize_t store_ant_info(struct kobject *kobj,
+			    struct kobj_attribute *attr,
+			    const char *buf,
+			    size_t count)
+{
+	icnss_pr_info("%s enter\n", __func__);
+	sscanf(buf, "%d", &ant_from_macloader);
+	icnss_pr_info("ant_from_macloader %d\n", ant_from_macloader);
+
+	return count;
+}
+
+static ssize_t show_wificableinfo(struct kobject *kobj,
+				 struct kobj_attribute *attr,
+				 char *buf)
+{
+	struct device_node *np;
+	int wifi_cable1 = 0;
+	int wifi_cable2 = 0;
+	char antbuffer[2] = {0};
+	int ret = 0;
+
+	np = of_find_compatible_node(NULL, NULL, "samsung,rome_cable");
+
+	if (!np) {
+		icnss_pr_err("can't find the rome_cable\n");
+		return 0;
+	}
+
+	wifi_cable1 = of_get_named_gpio(np, "wlan_cable_wifi_1", 0);
+	if (!gpio_is_valid(wifi_cable1))
+	{
+		icnss_pr_err("can't get wlan_cable_wifi1\n");
+		return 0;
+	}
+
+	wifi_cable2 = of_get_named_gpio(np, "wlan_cable_wifi_2", 0);
+	if (!gpio_is_valid(wifi_cable2))
+	{
+		icnss_pr_err("can't get wlan_cable_wifi2\n");
+		return 0;
+	}
+
+	ret = gpio_direction_input(wifi_cable1);
+	if (ret) {
+			icnss_pr_err("Failed to set direction of wifi_cable1 GPIO, err %d", ret);
+			return -EINVAL;
+	}
+
+	ret = gpio_direction_input(wifi_cable2);
+	if (ret) {
+			icnss_pr_err("Failed to set direction of wifi_cable2 GPIO, err %d", ret);
+			return -EINVAL;
+	}
+
+	gpio_get_value(wifi_cable1);
+	gpio_get_value(wifi_cable2);
+	msleep(100);
+
+	icnss_pr_err("wifi_cable1 = %d , wifi_cable2 = %d\n" ,wifi_cable1 , wifi_cable2 );
+	icnss_pr_err("wlan_cable_wifi1 = %d wlan_cable_wifi2 = %d\n", gpio_get_value(wifi_cable1), gpio_get_value(wifi_cable2));
+	sprintf(antbuffer, "%c%c\n", (gpio_get_value(wifi_cable1) > 0) ? 'D' : 'E' , (gpio_get_value(wifi_cable2) > 0) ? 'D' : 'E');
+
+	return scnprintf(buf, PAGE_SIZE, "%s", antbuffer);
+}
+
+static ssize_t store_memdump_info(struct kobject *kobj,
+			    struct kobj_attribute *attr,
+			    const char *buf,
+			    size_t count)
+{
+	icnss_pr_info("%s called\n", __func__);
+	return count;
+}
+static struct kobj_attribute sec_mac_addr_attribute =
+        __ATTR(mac_addr, 0220, NULL, store_mac_addr);
+static struct kobj_attribute sec_verinfo_sysfs_attribute =
+	__ATTR(wifiver, 0440, show_verinfo, NULL);
+static struct kobj_attribute sec_softapinfo_sysfs_attribute =
+	__ATTR(softap, 0440, show_softapinfo, NULL);
+static struct kobj_attribute qcwlanstate_attribute =
+       __ATTR(qcwlanstate, 0440, show_qcwlanstate, NULL);
+static struct kobj_attribute sec_pminfo_sysfs_attribute =
+       __ATTR(pm, 0220, NULL, store_pm_info);
+static struct kobj_attribute sec_antinfo_sysfs_attribute =
+       __ATTR(ant, 0220, NULL, store_ant_info);
+static struct kobj_attribute sec_wificableinfo_sysfs_attribute =
+	__ATTR(wificable, 0440, show_wificableinfo, NULL);
+static struct kobj_attribute sec_memdumpinfo_sysfs_attribute =
+	__ATTR(memdump, 0220, NULL, store_memdump_info);
+
+static struct attribute *sec_sysfs_attrs[] = {
+	&sec_mac_addr_attribute.attr,
+	&sec_verinfo_sysfs_attribute.attr,
+	&sec_softapinfo_sysfs_attribute.attr,
+	&qcwlanstate_attribute.attr,
+	&sec_pminfo_sysfs_attribute.attr,
+	&sec_antinfo_sysfs_attribute.attr,
+	&sec_wificableinfo_sysfs_attribute.attr,
+	&sec_memdumpinfo_sysfs_attribute.attr,
+	NULL
+};
+
+static struct attribute_group sec_sysfs_attr_group = {
+        .attrs = sec_sysfs_attrs,
+};
+
+static int sec_create_wifi_sysfs(struct icnss_priv *plat_priv)
+{
+	int ret = 0;
+
+	plat_priv->wifi_kobj = kobject_create_and_add("wifi", NULL);
+	if (!plat_priv->wifi_kobj) {
+		icnss_pr_err("Failed to create shutdown_wlan kernel object\n");
+		return -ENOMEM;
+	}
+
+        ret = sysfs_create_group(plat_priv->wifi_kobj, &sec_sysfs_attr_group);
+        if (ret) {
+                icnss_pr_err("could not create group %d", ret);
+		kobject_put(plat_priv->wifi_kobj);
+		plat_priv->wifi_kobj = NULL;
+	}
+
+	icnss_pr_info("%s done\n", __func__);
+
+	return ret;
+}
+
+static void sec_remove_wifi_sysfs(struct icnss_priv *plat_priv)
+{
+	if (plat_priv->wifi_kobj) {
+		sysfs_remove_group(plat_priv->wifi_kobj,
+				  &sec_sysfs_attr_group);
+		kobject_put(plat_priv->wifi_kobj);
+		plat_priv->wifi_kobj = NULL;
+	}
+}
+#endif /* CONFIG_SEC_SS_CNSS_FEATURE_SYSFS */
 
 static struct attribute *icnss_attrs[] = {
 	&dev_attr_qdss_tr_start.attr,
@@ -3912,7 +4182,7 @@ static inline void  icnss_get_smp2p_info(struct icnss_priv *priv)
 					    "wlan-smp2p-out",
 					    &priv->smp2p_info.smem_bit);
 	if (IS_ERR(priv->smp2p_info.smem_state)) {
-		icnss_pr_smp2p("Failed to get smem state %d",
+		icnss_pr_err("Failed to get smem state %d",
 			     PTR_ERR(priv->smp2p_info.smem_state));
 	}
 
@@ -4056,7 +4326,10 @@ static int icnss_probe(struct platform_device *pdev)
 	icnss_debugfs_create(priv);
 
 	icnss_sysfs_create(priv);
-
+#ifdef CONFIG_SEC_SS_CNSS_FEATURE_SYSFS
+	sec_create_wifi_sysfs(priv);
+	init_completion(&priv->macloader_done);
+#endif /* CONFIG_SEC_SS_CNSS_FEATURE_SYSFS */
 	ret = device_init_wakeup(&priv->pdev->dev, true);
 	if (ret)
 		icnss_pr_err("Failed to init platform device wakeup source, err = %d\n",
@@ -4124,7 +4397,10 @@ static int icnss_remove(struct platform_device *pdev)
 	device_init_wakeup(&priv->pdev->dev, false);
 
 	icnss_debugfs_destroy(priv);
-
+#ifdef CONFIG_SEC_SS_CNSS_FEATURE_SYSFS
+	complete_all(&priv->macloader_done);
+	sec_remove_wifi_sysfs(priv);
+#endif /* CONFIG_SEC_SS_CNSS_FEATURE_SYSFS */
 	icnss_sysfs_destroy(priv);
 
 	complete_all(&priv->unblock_shutdown);

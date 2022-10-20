@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2018-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/module.h>
@@ -292,6 +293,8 @@ static int wcd938x_init_reg(struct snd_soc_component *component)
 				WCD938X_DIGITAL_EFUSE_REG_30) & 0x07) << 1));
 	snd_soc_component_update_bits(component,
 				WCD938X_HPH_SURGE_HPHLR_SURGE_EN, 0xC0, 0xC0);
+	snd_soc_component_update_bits(component,
+				WCD938X_MICB2_TEST_CTL_3, 0xFF, 0xA4);
 
 	return 0;
 }
@@ -2029,7 +2032,7 @@ int wcd938x_micbias_control(struct snd_soc_component *component,
 						pre_off_event,
 						&wcd938x->mbhc->wcd_mbhc);
 			snd_soc_component_update_bits(component, micb_reg,
-							0xC0, 0x00);
+							0xC0, 0xC0);
 			if (post_off_event && wcd938x->mbhc)
 				blocking_notifier_call_chain(
 						&wcd938x->mbhc->notifier,
@@ -2919,6 +2922,97 @@ static int wcd938x_bcs_put(struct snd_kcontrol *kcontrol,
 	return 0;
 }
 
+/*
+ * wcd938x_codec_enable_standalone_micbias - enable micbias standalone
+ * @component: pointer to component instance
+ * @micb_num: number of micbias to be enabled
+ * @enable: true to enable micbias or false to disable
+ *
+ * This function is used to enable micbias (1, 2, 3 or 4) during
+ * standalone independent of whether TX use-case is running or not
+ *
+ * Return: error code in case of failure or 0 for success
+ */
+
+int wcd938x_codec_enable_standalone_micbias(struct snd_soc_component *component,
+					int micb_num,
+					bool enable)
+{
+	const char * const micb_names[] = {
+		DAPM_MICBIAS1_STANDALONE, DAPM_MICBIAS2_STANDALONE,
+		DAPM_MICBIAS3_STANDALONE, DAPM_MICBIAS4_STANDALONE
+	};
+	int micb_index = micb_num - 1;
+	int rc;
+	struct snd_soc_dapm_context *dapm =
+			snd_soc_component_get_dapm(component);
+
+	if ((micb_index < 0) || (micb_index > WCD938X_MAX_MICBIAS - 1)) {
+		dev_err(component->dev, "%s: Invalid micbias index, micb_ind:%d\n",
+			__func__, micb_index);
+		return -EINVAL;
+	}
+
+	if (enable)
+		rc = snd_soc_dapm_force_enable_pin(
+						dapm,
+						micb_names[micb_index]);
+	else
+		rc = snd_soc_dapm_disable_pin(
+						dapm,
+						micb_names[micb_index]);
+	if (!rc)
+		snd_soc_dapm_sync(dapm);
+	else
+		dev_err(component->dev, "%s: micbias%d force %s pin failed\n",
+			__func__, micb_num, (enable ? "enable" : "disable"));
+
+	return rc;
+}
+EXPORT_SYMBOL(wcd938x_codec_enable_standalone_micbias);
+
+static int wcd938x_get_micbias(struct snd_kcontrol *kcontrol,
+				struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_component *component = snd_soc_kcontrol_component(kcontrol);
+	struct wcd938x_priv *wcd938x = snd_soc_component_get_drvdata(component);
+	int micb_num = ((struct soc_multi_mixer_control *)
+		    kcontrol->private_value)->shift;
+
+	ucontrol->value.integer.value[0] = wcd938x->micb_enabled[micb_num - 1];
+	pr_err("%s:: get_micbias[%d] = %d\n", __func__, micb_num, wcd938x->micb_enabled[micb_num - 1]);
+	return 0;
+}
+
+static int wcd938x_set_micbias(struct snd_kcontrol *kcontrol,
+				struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_component *component = snd_soc_kcontrol_component(kcontrol);
+	struct wcd938x_priv *wcd938x = snd_soc_component_get_drvdata(component);
+	int micb_num = ((struct soc_multi_mixer_control *)
+		    kcontrol->private_value)->shift;
+	int value = ucontrol->value.integer.value[0];
+	bool enable;
+	int ret;
+
+	if ((micb_num != MIC_BIAS_1) && (micb_num != MIC_BIAS_2) &&
+	    (micb_num != MIC_BIAS_3) && (micb_num != MIC_BIAS_4))
+		return -EINVAL;
+
+	enable = !!value;
+	ret = wcd938x_codec_enable_standalone_micbias(component, micb_num,
+						    enable);
+	if (ret) {
+		dev_err(component->dev, "%s: Failed to enable standalone micb:%d\n",
+			__func__, micb_num);
+		return ret;
+	}
+
+	wcd938x->micb_enabled[micb_num - 1] = enable;
+	pr_err("%s:: set_micbias[%d] = %d\n", __func__, micb_num, wcd938x->micb_enabled[micb_num - 1]);
+	return ret;
+}
+
 static const char * const tx_mode_mux_text_wcd9380[] = {
 	"ADC_INVALID", "ADC_HIFI", "ADC_LO_HIF", "ADC_NORMAL", "ADC_LP",
 };
@@ -3045,6 +3139,14 @@ static const struct snd_kcontrol_new wcd938x_snd_controls[] = {
 			wcd938x_tx_master_ch_get, wcd938x_tx_master_ch_put),
 	SOC_ENUM_EXT("DMIC7 ChMap", tx_master_ch_enum,
 			wcd938x_tx_master_ch_get, wcd938x_tx_master_ch_put),
+	SOC_SINGLE_EXT("MIC BIAS1 Standalone", SND_SOC_NOPM, MIC_BIAS_1, 1, 0,
+			wcd938x_get_micbias, wcd938x_set_micbias),
+	SOC_SINGLE_EXT("MIC BIAS2 Standalone", SND_SOC_NOPM, MIC_BIAS_2, 1, 0,
+			wcd938x_get_micbias, wcd938x_set_micbias),
+	SOC_SINGLE_EXT("MIC BIAS3 Standalone", SND_SOC_NOPM, MIC_BIAS_3, 1, 0,
+			wcd938x_get_micbias, wcd938x_set_micbias),
+	SOC_SINGLE_EXT("MIC BIAS4 Standalone", SND_SOC_NOPM, MIC_BIAS_4, 1, 0,
+			wcd938x_get_micbias, wcd938x_set_micbias),
 };
 
 static const struct snd_kcontrol_new adc1_switch[] = {
@@ -4048,6 +4150,21 @@ static int wcd938x_reset_low(struct device *dev)
 struct wcd938x_pdata *wcd938x_populate_dt_data(struct device *dev)
 {
 	struct wcd938x_pdata *pdata = NULL;
+#ifdef CONFIG_SND_SOC_IMPED_SENSING
+	int rc = 0;
+	int i;
+	struct of_phandle_args imp_list;
+	struct wcd938x_gain_table default_table[MAX_IMPEDANCE_TABLE] = {
+		{	 0, 	  0, 6},
+		{	 1, 	 13, 0},
+		{	14, 	 25, 3},
+		{	26, 	 42, 4},
+		{	43, 	100, 5},
+		{  101, 	200, 7},
+		{  201,    1000, 8},
+		{ 1001, INT_MAX, 6},
+};
+#endif
 
 	pdata = devm_kzalloc(dev, sizeof(struct wcd938x_pdata),
 				GFP_KERNEL);
@@ -4077,6 +4194,26 @@ struct wcd938x_pdata *wcd938x_populate_dt_data(struct device *dev)
 	pdata->tx_slave = of_parse_phandle(dev->of_node, "qcom,tx-slave", 0);
 
 	wcd938x_dt_parse_micbias_info(dev, &pdata->micbias);
+
+#ifdef CONFIG_SND_SOC_IMPED_SENSING
+	for (i = 0; i < ARRAY_SIZE(pdata->imp_table); i++) {
+		rc = of_parse_phandle_with_args(dev->of_node,
+			"imp-table", "#list-imp-cells", i, &imp_list);
+		if (rc < 0) {
+			pdata->imp_table[i].min = default_table[i].min;
+			pdata->imp_table[i].max = default_table[i].max;
+			pdata->imp_table[i].gain = default_table[i].gain;
+		} else {
+			pdata->imp_table[i].min = imp_list.args[0];
+			pdata->imp_table[i].max = imp_list.args[1];
+			pdata->imp_table[i].gain = imp_list.args[2];
+		}
+		dev_info(dev, "impedance gain table %d, %d, %d\n",
+			pdata->imp_table[i].min,
+			pdata->imp_table[i].max,
+			pdata->imp_table[i].gain);
+	}
+#endif
 
 	return pdata;
 }

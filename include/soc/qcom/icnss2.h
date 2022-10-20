@@ -196,4 +196,8 @@ extern int icnss_prevent_l1(struct device *dev);
 extern void icnss_allow_l1(struct device *dev);
 extern int icnss_get_mhi_state(struct device *dev);
 extern int icnss_is_pci_ep_awake(struct device *dev);
+//#ifdef SEC_SS_CNSS_FEATURE_SYSFS
+extern int cnss_sysfs_get_pm_info(void);
+extern void cnss_sysfs_update_driver_status(int32_t new_status, void *version, void *softap);
+//#endif /* SEC_SS_CNSS_FEATURE_SYSFS */
 #endif /* _ICNSS_WLAN_H_ */

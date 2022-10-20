@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.`
  */
 
 #define pr_fmt(fmt)	"sde_dbg:[%s] " fmt, __func__
@@ -16,6 +16,10 @@
 
 #include "sde_dbg.h"
 #include "sde_trace.h"
+
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+#include <linux/sched/clock.h>
+#endif
 
 #define SDE_EVTLOG_FILTER_STRSIZE	64
 
@@ -125,7 +129,11 @@ void sde_reglog_log(u8 blk_id, u32 val, u32 addr)
 static bool _sde_evtlog_dump_calc_range(struct sde_dbg_evtlog *evtlog,
 		bool update_last_entry, bool full_dump)
 {
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+	int max_entries = full_dump ? SDE_EVTLOG_ENTRY : (SDE_EVTLOG_PRINT_ENTRY * 2);
+#else
 	int max_entries = full_dump ? SDE_EVTLOG_ENTRY : SDE_EVTLOG_PRINT_ENTRY;
+#endif
 
 	if (!evtlog)
 		return false;
@@ -219,7 +227,7 @@ struct sde_dbg_evtlog *sde_evtlog_init(void)
 {
 	struct sde_dbg_evtlog *evtlog;
 
-	evtlog = kzalloc(sizeof(*evtlog), GFP_KERNEL);
+	evtlog = vzalloc(sizeof(*evtlog));
 	if (!evtlog)
 		return ERR_PTR(-ENOMEM);
 
@@ -239,7 +247,7 @@ struct sde_dbg_reglog *sde_reglog_init(void)
 {
 	struct sde_dbg_reglog *reglog;
 
-	reglog = kzalloc(sizeof(*reglog), GFP_KERNEL);
+	reglog = vzalloc(sizeof(*reglog));
 	if (!reglog)
 		return ERR_PTR(-ENOMEM);
 
@@ -350,7 +358,7 @@ void sde_evtlog_destroy(struct sde_dbg_evtlog *evtlog)
 		list_del(&filter_node->list);
 		kfree(filter_node);
 	}
-	kfree(evtlog);
+	vfree(evtlog);
 }
 
 void sde_reglog_destroy(struct sde_dbg_reglog *reglog)
@@ -358,5 +366,5 @@ void sde_reglog_destroy(struct sde_dbg_reglog *reglog)
 	if (!reglog)
 		return;
 
-	kfree(reglog);
+	vfree(reglog);
 }

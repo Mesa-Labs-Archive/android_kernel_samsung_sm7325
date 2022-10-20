@@ -10,6 +10,10 @@
 #include "dsi_pwr.h"
 #include "dsi_parser.h"
 #include "dsi_defs.h"
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+#include "dsi_panel.h"
+#include "ss_dsi_panel_common.h"
+#endif
 
 /*
  * dsi_pwr_parse_supply_node() - parse power supply node from root device node
@@ -68,7 +72,6 @@ static int dsi_pwr_parse_supply_node(struct dsi_parser_utils *utils,
 		rc = utils->read_u32(node, "qcom,supply-ulp-load", &tmp);
 		if (rc) {
 			DSI_DEBUG("ulp-load not specified\n");
-			rc = 0;
 		}
 		regs->vregs[i].ulp_load = (!rc ? tmp :
 			regs->vregs[i].enable_load);
@@ -160,10 +163,49 @@ static int dsi_pwr_enable_vregs(struct dsi_regulator_info *regs, bool enable)
 	int num_of_v = 0;
 	u32 pre_on_ms, post_on_ms;
 	u32 pre_off_ms, post_off_ms;
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+	struct dsi_panel *panel = NULL;
+	struct dsi_display *display = NULL;
+	struct samsung_display_driver_data *vdd = NULL;
+
+	/* qcom supplys has only 1 count for each one */
+	/* only samsung count will be 2~5 */
+	if (regs->count > 1) {
+		panel = container_of(regs, struct dsi_panel, power_info);
+		if (panel) {
+			if (panel->panel_private)
+				vdd = panel->panel_private;
+			else
+				DSI_ERR("No panel private\n");
+
+			display = container_of(panel->host, struct dsi_display, host);
+			if (!display)
+				DSI_ERR("No dsi_display\n");
+		} else
+			DSI_ERR("No panel\n");
+	}
+#endif
 
 	if (enable) {
 		for (i = 0; i < regs->count; i++) {
 			vreg = &regs->vregs[i];
+
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+			if (panel && vdd && display) {
+				/* aot_reset_regulator means reset is set as regulator
+				 * but panel_reset or lcd_rst regulator should not be controlled here
+				 */
+				if ((vdd->aot_reset_regulator || vdd->aot_reset_regulator_late)
+					&& !display->is_cont_splash_enabled
+					&& (!strcmp(vreg->vreg_name, "panel_reset")
+						|| !strcmp(vreg->vreg_name, "lcd_rst"))) {
+					DSI_INFO("aot_reset_regulator(_late) -> dsi_panel_reset_regulator\n");
+					continue;
+				}
+			} else
+				DSI_DEBUG("count 1 or no panel...\n");
+#endif
+
 			pre_on_ms = vreg->pre_on_sleep;
 			post_on_ms = vreg->post_on_sleep;
 
@@ -204,6 +246,29 @@ static int dsi_pwr_enable_vregs(struct dsi_regulator_info *regs, bool enable)
 	} else {
 		for (i = (regs->count - 1); i >= 0; i--) {
 			vreg = &regs->vregs[i];
+
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+			if (panel && vdd && display) {
+				if ((vdd->aot_reset_regulator || vdd->aot_reset_regulator_late)
+					&& !display->is_cont_splash_enabled
+					&& (!strcmp(vreg->vreg_name, "panel_reset")
+						|| !strcmp(vreg->vreg_name, "lcd_rst"))) {
+					DSI_INFO("aot_reset_regulator skip reset off here\n");
+					continue;
+				}
+
+				if (vdd->boost_early_off && !strcmp(vreg->vreg_name, "panel_boost_en")) {
+					if (regulator_is_enabled(regs->vregs[i].vreg)) {
+						/* Defence if boost_en is not off, due to no brightness 0 btw screen on-off */
+						DSI_INFO("boost_en is ON, so OFF here\n");
+					} else {
+						DSI_INFO("boost_en is already off.. so skip for boost_en\n");
+						continue;
+					}
+				}
+			}
+#endif
+
 			pre_off_ms = vreg->pre_off_sleep;
 			post_off_ms = vreg->post_off_sleep;
 

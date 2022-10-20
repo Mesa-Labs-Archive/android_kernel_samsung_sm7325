@@ -968,6 +968,13 @@ config SERIAL_MSM_GENI
 	    hardware.
 	    The driver supports console and High speed UART functions.
 
+config SERIAL_UART_SAMSUNG_USE
+	bool "Samsung's specific usage of serial uart"
+	default n
+	help
+	    Samsung defines two device nodes(console and High speed UART) for one serial port.
+	    Select one node to use and destroy other at runtime
+
 config SERIAL_MSM_GENI_EARLY_CONSOLE
 	bool "MSM on-chip GENI HW based early console support"
 	help

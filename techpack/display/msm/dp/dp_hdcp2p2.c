@@ -16,6 +16,10 @@
 #include "sde_hdcp_2x.h"
 #include "dp_debug.h"
 
+#if defined(CONFIG_SEC_DISPLAYPORT_ENG)
+#include <linux/secdp_logger.h>
+#endif
+
 #define DP_INTR_STATUS2				(0x00000024)
 #define DP_INTR_STATUS3				(0x00000028)
 #define dp_read(offset) readl_relaxed((offset))
@@ -316,7 +320,8 @@ static int dp_hdcp2p2_authenticate(void *input)
 	ctrl->sink_status = SINK_CONNECTED;
 	atomic_set(&ctrl->auth_state, HDCP_STATE_AUTHENTICATING);
 
-	kthread_park(ctrl->thread);
+	if (kthread_should_park())
+		kthread_park(ctrl->thread);
 	kfifo_reset(&ctrl->cmd_q);
 	kthread_unpark(ctrl->thread);
 
@@ -405,7 +410,7 @@ static int dp_hdcp2p2_aux_read_message(struct dp_hdcp2p2_ctrl *ctrl)
 	diff_ms = ktime_ms_delta(finish_read, start_read);
 
 	if (ctrl->transaction_timeout && diff_ms > ctrl->transaction_timeout) {
-		DP_ERR("HDCP read timeout exceeded (%dms > %dms)\n", diff_ms,
+		DP_ERR("HDCP read timeout exceeded (%llums > %ums)\n", diff_ms,
 				ctrl->transaction_timeout);
 		rc = -ETIMEDOUT;
 	}
@@ -648,6 +653,10 @@ static int dp_hdcp2p2_read_rx_status(struct dp_hdcp2p2_ctrl *ctrl,
 	}
 
 	cp_irq = buf & BIT(2);
+#ifdef SECDP_TEST_HDCP2P2_REAUTH
+	cp_irq = true;
+	DP_DEBUG("[HDCP2P2_REAUTH_TEST]\n");
+#endif
 	DP_DEBUG("cp_irq=0x%x\n", cp_irq);
 	buf = 0;
 
@@ -660,6 +669,9 @@ static int dp_hdcp2p2_read_rx_status(struct dp_hdcp2p2_ctrl *ctrl,
 			goto error;
 		}
 		*rx_status = buf;
+#ifdef SECDP_TEST_HDCP2P2_REAUTH
+		*rx_status = 0x8;
+#endif
 		DP_DEBUG("rx_status=0x%x\n", *rx_status);
 	}
 
@@ -784,6 +796,15 @@ static bool dp_hdcp2p2_supported(void *input)
 		DP_ERR("RxCaps read failed\n");
 		goto error;
 	}
+
+#if defined(CONFIG_SEC_DISPLAYPORT)
+{
+	u32 i;
+
+	for (i = 0; i < DP_HDCP_RXCAPS_LENGTH; i++)
+		DP_DEBUG("rxcaps[%d] 0x%x\n", i, buf[i]);
+}
+#endif
 
 	DP_DEBUG("HDCP_CAPABLE=%lu\n", (buf[2] & BIT(1)) >> 1);
 	DP_DEBUG("VERSION=%d\n", buf[0]);

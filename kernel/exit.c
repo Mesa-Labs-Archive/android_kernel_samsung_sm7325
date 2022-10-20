@@ -69,6 +69,14 @@
 #include <asm/pgtable.h>
 #include <asm/mmu_context.h>
 
+#ifdef CONFIG_SECURITY_DEFEX
+#include <linux/defex.h>
+#endif
+
+#if defined(CONFIG_MEMORY_ZEROISATION)
+#include <linux/mz.h> /* for Memory zeroisation */
+#endif
+
 static void __unhash_process(struct task_struct *p, bool group_dead)
 {
 	nr_threads--;
@@ -488,6 +496,11 @@ static void exit_mm(void)
 	mmput(mm);
 	if (test_thread_flag(TIF_MEMDIE))
 		exit_oom_victim();
+
+	/* Memory zeroisation */
+#if defined(CONFIG_MEMORY_ZEROISATION)
+	mz_exit();
+#endif
 }
 
 static struct task_struct *find_alive_thread(struct task_struct *p)
@@ -722,6 +735,10 @@ void __noreturn do_exit(long code)
 	 * Then fix up important state like USER_DS and preemption.
 	 * Then do everything else.
 	 */
+
+#ifdef CONFIG_SECURITY_DEFEX
+	task_defex_zero_creds(current);
+#endif
 
 	WARN_ON(blk_needs_flush_plug(tsk));
 

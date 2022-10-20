@@ -18,7 +18,7 @@
 
 /* ION_BIT(0) is reserved for the generic system heap. */
 #define ION_QSECOM_TA_HEAP_ID		ION_BIT(1)
-#define ION_CAMERA_HEAP_ID		ION_BIT(2)
+#define ION_CAMERA_HEAP_ID		ION_BIT(30)
 #define ION_DISPLAY_HEAP_ID		ION_BIT(3)
 #define ION_ADSP_HEAP_ID		ION_BIT(4)
 #define ION_AUDIO_ML_HEAP_ID		ION_BIT(5)

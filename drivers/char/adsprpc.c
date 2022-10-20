@@ -53,6 +53,16 @@
 #include <linux/preempt.h>
 #include <linux/of_reserved_mem.h>
 
+#include <linux/sec_debug.h>
+#if !defined(SS_FASTRPC_DEBUG)
+#define SS_FASTRPC_DEBUG
+
+#define FASTRPC_DEBUG(X, ...) pr_debug("[FASTRPC_DBG] %s : "X,  __func__, ## __VA_ARGS__)
+#define FASTRPC_INFO(X, ...) pr_info("[FASTRPC_DBG] %s : "X,  __func__, ## __VA_ARGS__)
+#define FASTRPC_INFO_ONCE(X, ...) pr_info_once("[FASTRPC_DBG] %s : "X,  __func__, ## __VA_ARGS__)
+#define FASTRPC_ERR(X, ...) pr_err("[FASTRPC_DBG] %s : "X,  __func__, ## __VA_ARGS__)
+#endif
+
 #define CREATE_TRACE_POINTS
 #include <trace/events/fastrpc.h>
 
@@ -63,7 +73,13 @@
 #define FASTRPC_DMAHANDLE_NOMAP (16)
 
 #define FASTRPC_ENOSUCH 39
+
+#if defined(SS_FASTRPC_DEBUG)
+#define DEBUGFS_SIZE (PAGE_SIZE * 10)
+#else
 #define DEBUGFS_SIZE 3072
+#endif
+
 #define PID_SIZE 10
 
 #define AUDIO_PDR_ADSP_DTSI_PROPERTY_NAME        "qcom,fastrpc-adsp-audio-pdr"
@@ -265,6 +281,18 @@ enum fastrpc_msg_type {
 
 /* User PD Dump Name Max length */
 #define RAMDUMP_NAME_MAX_LENGTH 20
+
+#if defined(SS_FASTRPC_DEBUG)
+#include <linux/ktime.h>
+#define FAST_RPC_DEBUG_MAX (10)
+
+struct ss_fastrpc_ioctl_debug {
+	ktime_t ioctl_time[FAST_RPC_DEBUG_MAX];
+	unsigned int ioctl_cmd[FAST_RPC_DEBUG_MAX];
+
+	int ioctl_index; 
+};
+#endif
 
 static int fastrpc_pdr_notifier_cb(struct notifier_block *nb,
 					unsigned long code,
@@ -648,6 +676,11 @@ struct fastrpc_file {
 	bool is_ramdump_pend;
 	/* Flag to indicate dynamic process creation status*/
 	bool in_process_create;
+
+#if defined(SS_FASTRPC_DEBUG)
+ 	struct ss_fastrpc_ioctl_debug ss_fastrpc_dbg;
+ 	bool ss_kernel_debug_print_only;
+#endif
 };
 
 static struct fastrpc_apps gfa;
@@ -727,6 +760,12 @@ static uint32_t kernel_capabilities[FASTRPC_MAX_ATTRIBUTES -
 	1
 	/* Fastrpc Driver error code changes present */
 };
+
+#if defined(SS_FASTRPC_DEBUG)
+void ss_fastrpc_debug_cid(int cid);
+void ss_fastrpc_debug_fl(struct fastrpc_file *fl);
+void ss_fastrpc_debug_release(struct fastrpc_file *fl);
+#endif
 
 static inline void fastrpc_pm_awake(struct fastrpc_file *fl, int channel_type);
 static int fastrpc_mem_map_to_dsp(struct fastrpc_file *fl, int fd, int offset,
@@ -5299,7 +5338,14 @@ static ssize_t fastrpc_debugfs_read(struct file *filp, char __user *buffer,
 	char single_line[] = "----------------";
 	char title[] = "=========================";
 
+#if defined(SS_FASTRPC_DEBUG)
+ 	int ss_index = 0;
+
+	fileinfo = vzalloc(DEBUGFS_SIZE);
+#else
 	fileinfo = kzalloc(DEBUGFS_SIZE, GFP_KERNEL);
+#endif
+
 	if (!fileinfo) {
 		ret = -ENOMEM;
 		goto bail;
@@ -5350,6 +5396,7 @@ static ssize_t fastrpc_debugfs_read(struct file *filp, char __user *buffer,
 		len += scnprintf(fileinfo + len, DEBUGFS_SIZE - len,
 			"%s%s%s%s%s\n", single_line, single_line,
 			single_line, single_line, single_line);
+		spin_lock(&me->hlock);
 		hlist_for_each_entry_safe(gmaps, n, &me->maps, hn) {
 			len += scnprintf(fileinfo + len, DEBUGFS_SIZE - len,
 				"%-20d|0x%-18llX|0x%-18X|0x%-20lX\n\n",
@@ -5357,18 +5404,21 @@ static ssize_t fastrpc_debugfs_read(struct file *filp, char __user *buffer,
 				(uint32_t)gmaps->size,
 				gmaps->va);
 		}
+		spin_unlock(&me->hlock);
 		len += scnprintf(fileinfo + len, DEBUGFS_SIZE - len,
 			"%-20s|%-20s|%-20s|%-20s\n",
 			"len", "refs", "raddr", "flags");
 		len += scnprintf(fileinfo + len, DEBUGFS_SIZE - len,
 			"%s%s%s%s%s\n", single_line, single_line,
 			single_line, single_line, single_line);
+		spin_lock(&me->hlock);
 		hlist_for_each_entry_safe(gmaps, n, &me->maps, hn) {
 			len += scnprintf(fileinfo + len, DEBUGFS_SIZE - len,
 				"0x%-18X|%-20d|%-20lu|%-20u\n",
 				(uint32_t)gmaps->len, gmaps->refs,
 				gmaps->raddr, gmaps->flags);
 		}
+		spin_unlock(&me->hlock);
 	} else {
 		len += scnprintf(fileinfo + len, DEBUGFS_SIZE - len,
 			"\n%s %13s %d\n", "cid", ":", fl->cid);
@@ -5410,12 +5460,14 @@ static ssize_t fastrpc_debugfs_read(struct file *filp, char __user *buffer,
 			"%s%s%s%s%s\n",
 			single_line, single_line, single_line,
 			single_line, single_line);
+		mutex_lock(&fl->map_mutex);
 		hlist_for_each_entry_safe(map, n, &fl->maps, hn) {
 			len += scnprintf(fileinfo + len, DEBUGFS_SIZE - len,
 				"0x%-20lX|0x%-20llX|0x%-20zu\n\n",
 				map->va, map->phys,
 				map->size);
 		}
+		mutex_unlock(&fl->map_mutex);
 		len += scnprintf(fileinfo + len, DEBUGFS_SIZE - len,
 			"%-20s|%-20s|%-20s|%-20s\n",
 			"len", "refs",
@@ -5424,28 +5476,41 @@ static ssize_t fastrpc_debugfs_read(struct file *filp, char __user *buffer,
 			"%s%s%s%s%s\n",
 			single_line, single_line, single_line,
 			single_line, single_line);
+		mutex_lock(&fl->map_mutex);
 		hlist_for_each_entry_safe(map, n, &fl->maps, hn) {
 			len += scnprintf(fileinfo + len, DEBUGFS_SIZE - len,
 				"%-20zu|%-20d|0x%-20lX|%-20d\n\n",
 				map->len, map->refs, map->raddr,
 				map->uncached);
 		}
+		mutex_unlock(&fl->map_mutex);
 		len += scnprintf(fileinfo + len, DEBUGFS_SIZE - len,
 			"%-20s|%-20s\n", "secure", "attr");
 		len += scnprintf(fileinfo + len, DEBUGFS_SIZE - len,
 			"%s%s%s%s%s\n",
 			single_line, single_line, single_line,
 			single_line, single_line);
+		mutex_lock(&fl->map_mutex);
 		hlist_for_each_entry_safe(map, n, &fl->maps, hn) {
 			len += scnprintf(fileinfo + len, DEBUGFS_SIZE - len,
 				"%-20d|0x%-20lX\n\n",
 				map->secure, map->attr);
 		}
-
+		mutex_unlock(&fl->map_mutex);
 		len += scnprintf(fileinfo + len, DEBUGFS_SIZE - len,
 			"\n======%s %s %s======\n", title,
 			" LIST OF BUFS ", title);
 		spin_lock(&fl->hlock);
+
+#if defined(SS_FASTRPC_DEBUG)
+		/* To check file is alive */
+ 		if (fl->file_close >= FASTRPC_PROCESS_EXIT_START) {
+			FASTRPC_ERR("fl file_close\n");
+			ret = -ENOMEM;
+			spin_unlock(&fl->hlock);
+			goto ss_bail;
+		}
+#endif
 		len += scnprintf(fileinfo + len, DEBUGFS_SIZE - len,
 			"%-19s|%-19s|%-19s\n",
 			"virt", "phys", "size");
@@ -5490,15 +5555,146 @@ static ssize_t fastrpc_debugfs_read(struct file *filp, char __user *buffer,
 			ictx->sc, ictx->pid, ictx->tgid,
 			ictx->used, ictx->ctxid);
 		}
+#if defined(SS_FASTRPC_DEBUG)
+		len += scnprintf(fileinfo + len, DEBUGFS_SIZE - len,
+			"\n%s %s %s\n", title,
+			" SS_FASTRPC : ioctl ", title);
+		len += scnprintf(fileinfo + len, DEBUGFS_SIZE - len,
+			"%30s|%-4s\n", "ktime", "ioctl");
+		len += scnprintf(fileinfo + len, DEBUGFS_SIZE - len,
+			"%s%s%s%s%s\n", single_line, single_line,
+			single_line, single_line, single_line);
+
+		for (ss_index = 0; ss_index < FAST_RPC_DEBUG_MAX; ss_index++) {
+				len += scnprintf(fileinfo + len, DEBUGFS_SIZE - len,
+				"%20u.%06dus|%-4d\n",
+				fl->ss_fastrpc_dbg.ioctl_time[ss_index] / USEC_PER_SEC,
+				fl->ss_fastrpc_dbg.ioctl_time[ss_index] % USEC_PER_SEC,
+				(fl->ss_fastrpc_dbg.ioctl_cmd[ss_index] >> _IOC_NRSHIFT) & 0xFF);
+		}
+
+		if (fl->ss_kernel_debug_print_only)
+			count = 0; //not update user space(skip simple_read_from_buffer)
+#endif
+
 		spin_unlock(&fl->hlock);
 	}
 	if (len > DEBUGFS_SIZE)
 		len = DEBUGFS_SIZE;
 	ret = simple_read_from_buffer(buffer, count, position, fileinfo, len);
+    
+#if defined(SS_FASTRPC_DEBUG)
+ss_bail:
+	if (!IS_ERR_OR_NULL(fl) && fl->ss_kernel_debug_print_only) {
+		for (ss_index = 0; ss_index < len; ss_index++) {
+			if (fileinfo[ss_index] == 0xa) { //LF & CR
+				fileinfo[ss_index] = '\0';
+			}
+		}
+
+		fileinfo[len - 1] = '\0';
+
+		for (ss_index = 0; ss_index < len; ss_index++) {
+			if (fileinfo[ss_index] == '\0')
+				FASTRPC_ERR("%s\n", &fileinfo[ss_index + 1]);
+		}
+	}
+
+	vfree(fileinfo);
+#else
 	kfree(fileinfo);
+#endif
+
 bail:
 	return ret;
 }
+
+#if defined(SS_FASTRPC_DEBUG)
+void ss_fastrpc_debug_cid(int cid)
+{
+	struct fastrpc_apps *me = &gfa;
+	struct hlist_node *n = NULL;
+	struct fastrpc_file *fl = NULL;
+
+	struct file temp_file;
+	loff_t temp_loff = 0;
+
+	if (cid >= ADSP_DOMAIN_ID && cid <= CDSP_DOMAIN_ID) {
+		hlist_for_each_entry_safe(fl, n, &me->drivers, hn) {
+			if (fl->cid == cid) {
+				temp_file.private_data = fl;
+
+				fl->ss_kernel_debug_print_only = 1;
+				fastrpc_debugfs_read(&temp_file, NULL, 0, &temp_loff);
+				fl->ss_kernel_debug_print_only = 0;
+			}
+		}
+	} else {
+		FASTRPC_ERR("CID is not correct\n");
+	}
+}
+
+void ss_fastrpc_debug_fl(struct fastrpc_file *fl)
+{
+	struct fastrpc_apps *me = &gfa;
+	struct hlist_node *n = NULL;
+	struct fastrpc_file *temp_fl = NULL;
+
+	struct file temp_file;
+	loff_t temp_loff = 0;
+
+	if (!IS_ERR_OR_NULL(fl)) {
+		hlist_for_each_entry_safe(temp_fl, n, &me->drivers, hn) {
+			if (temp_fl == fl) {
+				temp_file.private_data = fl;
+
+				fl->ss_kernel_debug_print_only = 1;
+				fastrpc_debugfs_read(&temp_file, NULL, 0, &temp_loff);
+				fl->ss_kernel_debug_print_only = 0;
+				return;
+			}
+		}
+		FASTRPC_ERR("fl is not shown\n");
+	} else {
+		FASTRPC_ERR("fl is not correct\n");
+	}
+}
+
+void ss_fastrpc_debug_release(struct fastrpc_file *fl)
+{
+	struct fastrpc_apps *me = &gfa;
+	struct hlist_node *n = NULL;
+	struct fastrpc_file *temp_fl = NULL;
+	struct task_struct *tsk = current;
+
+	if (!IS_ERR_OR_NULL(fl)) {
+		hlist_for_each_entry_safe(temp_fl, n, &me->drivers, hn) {
+			if (temp_fl == fl) {
+				if (!hlist_empty(&fl->maps)) {
+					FASTRPC_ERR("fl release has mapped mem SIG : %d\n", tsk->exit_code);
+
+					if (sec_debug_is_enabled()) {
+						ss_fastrpc_debug_fl(fl);
+
+#if !defined(CONFIG_SAMSUNG_PRODUCT_SHIP)
+   						/* power off & reset is SIGTERM */                       
+  						if (tsk->exit_code != SIGKILL && tsk->exit_code != SIGTERM)
+ 							panic("fastrpc has mapped mem on release");
+#endif
+ 					} else {
+						FASTRPC_ERR("fl release has mapped mem tgid : %d pd : %d\n", fl->tgid, fl->pd);
+  					}
+
+				}
+				return;
+			}
+		}
+		FASTRPC_ERR("fl release try to twice\n");
+	} else {
+		FASTRPC_ERR("fl is not correct\n");
+	}
+}
+#endif
 
 static const struct file_operations debugfs_fops = {
 	.open = simple_open,
@@ -6132,6 +6328,15 @@ static long fastrpc_device_ioctl(struct file *file, unsigned int ioctl_num,
 	}
 	spin_unlock(&fl->hlock);
 
+#if defined(SS_FASTRPC_DEBUG)
+	fl->ss_fastrpc_dbg.ioctl_time[fl->ss_fastrpc_dbg.ioctl_index] = ktime_to_us(ktime_get());
+	fl->ss_fastrpc_dbg.ioctl_cmd[fl->ss_fastrpc_dbg.ioctl_index] = ioctl_num;
+	fl->ss_fastrpc_dbg.ioctl_index++;
+	fl->ss_fastrpc_dbg.ioctl_index %= FAST_RPC_DEBUG_MAX;
+
+	FASTRPC_DEBUG("tgid %d 0x%lx ioctl %d\n", fl->tgid, fl, (ioctl_num >> _IOC_NRSHIFT) & 0xFF);
+#endif
+
 	switch (ioctl_num) {
 	case FASTRPC_IOCTL_INVOKE:
 		size = sizeof(struct fastrpc_ioctl_invoke);
@@ -6233,6 +6438,16 @@ static long fastrpc_device_ioctl(struct file *file, unsigned int ioctl_num,
 		break;
 	}
  bail:
+
+#if defined(SS_FASTRPC_DEBUG)
+ 	if (!IS_ERR_OR_NULL(fl) && (fl->cid == CDSP_DOMAIN_ID)) { 
+		if (!(err == 0 || err == -ESHUTDOWN || err == -ENOTTY || err == -ERESTARTSYS)) {
+ 			FASTRPC_ERR("fl IOCTL FAIL cmd %d error %d 0x%x\n", (ioctl_num >> _IOC_NRSHIFT) & 0xFF, err, err);
+			ss_fastrpc_debug_fl(fl);
+		}
+ 	}
+#endif
+
 	return err;
 }
 
@@ -6640,6 +6855,7 @@ static void configure_secure_channels(uint32_t secure_domains)
 
 		me->channel[ii].secure = secure;
 		ADSPRPC_INFO("domain %d configured as secure %d\n", ii, secure);
+		printk("adsprpc: domain %d configured as secure %d\n", ii, secure);
 	}
 }
 
@@ -6674,6 +6890,33 @@ bail:
 	return err;
 }
 
+#ifdef CONFIG_QGKI
+#define CDSP_SIGNOFF_BLOCK 0x2377
+static unsigned int signoff_val;
+static int __init signoff_setup(char *str)
+{
+	get_option(&str, &signoff_val);
+	return 0;
+}
+early_param("signoff", signoff_setup);
+
+unsigned int is_signoff_block(void)
+{
+	pr_err("is_signoff_block : 0x%08x\n", signoff_val);
+	if (signoff_val == CDSP_SIGNOFF_BLOCK)
+			return 1;
+
+	return 0;
+}
+#else
+unsigned int is_signoff_block(void)
+{
+	pr_err("is_signoff_block is none\n");
+	return 0;
+}
+#endif
+
+
 static int fastrpc_probe(struct platform_device *pdev)
 {
 	int err = 0;
@@ -6694,7 +6937,7 @@ static int fastrpc_probe(struct platform_device *pdev)
 		of_property_read_u32(dev->of_node, "qcom,rpc-latency-us",
 			&me->latency);
 		if (of_get_property(dev->of_node,
-			"qcom,secure-domains", NULL) != NULL) {
+			"qcom,secure-domains", NULL) != NULL && is_signoff_block()) {
 			VERIFY(err, !of_property_read_u32(dev->of_node,
 					  "qcom,secure-domains",
 			      &secure_domains));

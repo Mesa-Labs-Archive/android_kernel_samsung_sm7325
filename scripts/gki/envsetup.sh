@@ -34,6 +34,16 @@ else
 	QCOM_DEBUG_FS_FRAG=" "
 fi
 
+SEC_COMMON_FRAG=${CONFIGS_DIR}/${PLATFORM_NAME}_sec_defconfig
+SEC_GKI_COMMON_FRAG=${CONFIGS_DIR}/${PLATFORM_NAME}_sec_GKI_defconfig
+SEC_ENG_FRAG=${CONFIGS_DIR}/${PLATFORM_NAME}_sec_eng_defconfig
+SEC_USERDEBUG_FRAG=${CONFIGS_DIR}/${PLATFORM_NAME}_sec_userdebug_defconfig
+
+echo "Samsung kernel envsetup $SEC_COMMON_FRAG"
+echo "Samsung kernel envsetup $SEC_ENG_FRAG"
+echo "Samsung kernel envsetup $SEC_USERDEBUG_FRAG"
+echo "Samsung kernel envsetup $SEC_GKI_COMMON_FRAG"
+
 # Consolidate fragment may not be present for all platforms.
 QCOM_CONSOLIDATE_FRAG=`ls ${CONFIGS_DIR}/${PLATFORM_NAME}_consolidate.config 2> /dev/null`
 

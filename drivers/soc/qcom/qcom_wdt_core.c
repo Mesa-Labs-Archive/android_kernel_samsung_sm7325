@@ -32,6 +32,10 @@
 #include <linux/kallsyms.h>
 #include <linux/kdebug.h>
 
+#if IS_ENABLED(CONFIG_SEC_DEBUG)
+#include <linux/sec_debug.h>
+#endif
+
 #define MASK_SIZE        32
 #define COMPARE_RET      -1
 
@@ -627,6 +631,21 @@ static ssize_t qcom_wdt_pet_time_get(struct device *dev,
 
 static DEVICE_ATTR(pet_time, 0400, qcom_wdt_pet_time_get, NULL);
 
+#if IS_ENABLED(CONFIG_SEC_DEBUG)
+static unsigned long long last_emerg_pet;
+
+void emerg_pet_watchdog(void)
+{
+	if (wdog_data && wdog_data->enabled) {
+		wdog_data->ops->enable_wdt(1, wdog_data);
+		wdog_data->ops->reset_wdt(wdog_data);
+
+		last_emerg_pet = sched_clock();
+	}
+}
+EXPORT_SYMBOL(emerg_pet_watchdog);
+#endif
+
 static void qcom_wdt_keep_alive_response(void *info)
 {
 	struct msm_watchdog_data *wdog_dd = info;
@@ -710,6 +729,9 @@ static __ref int qcom_wdt_kthread(void *arg)
 			delay_time = msecs_to_jiffies(wdog_dd->pet_time);
 			wdog_dd->ops->reset_wdt(wdog_dd);
 			wdog_dd->last_pet = sched_clock();
+#if IS_ENABLED(CONFIG_SEC_DEBUG)
+			sec_debug_save_last_pet(wdog_dd->last_pet);
+#endif
 		}
 		/* Check again before scheduling
 		 * Could have been changed on other cpu
@@ -795,6 +817,9 @@ EXPORT_SYMBOL(qcom_wdt_remove);
  */
 void qcom_wdt_trigger_bite(void)
 {
+#if IS_ENABLED(CONFIG_SEC_DEBUG)
+	int i;
+#endif
 	if (!wdog_data)
 		return;
 	compute_irq_stat(&wdog_data->irq_counts_work);
@@ -802,8 +827,13 @@ void qcom_wdt_trigger_bite(void)
 	wdog_data->ops->show_wdt_status(wdog_data);
 	wdog_data->ops->set_bite_time(1, wdog_data);
 	wdog_data->ops->reset_wdt(wdog_data);
+#if IS_ENABLED(CONFIG_SEC_DEBUG)
 	/* Delay to make sure bite occurs */
+	for (i = 0; i < 100; i++)
+		mdelay(100);
+#else
 	mdelay(10000);
+#endif
 	/*
 	 * This function induces the non-secure bite and control
 	 * should not return to the calling function. Non-secure
@@ -822,7 +852,9 @@ static irqreturn_t qcom_wdt_bark_handler(int irq, void *dev_id)
 	struct msm_watchdog_data *wdog_dd = dev_id;
 	unsigned long nanosec_rem;
 	unsigned long long t = sched_clock();
-
+#if IS_ENABLED(CONFIG_SEC_DEBUG)
+	sec_debug_prepare_for_wdog_bark_reset();
+#endif
 	nanosec_rem = do_div(t, 1000000000);
 	dev_info(wdog_dd->dev, "QCOM Apps Watchdog bark! Now = %lu.%06lu\n",
 			(unsigned long) t, nanosec_rem / 1000);
@@ -836,6 +868,16 @@ static irqreturn_t qcom_wdt_bark_handler(int irq, void *dev_id)
 	if (wdog_dd->freeze_in_progress)
 		dev_info(wdog_dd->dev, "Suspend in progress\n");
 
+#if IS_ENABLED(CONFIG_SEC_DEBUG)
+	emerg_pet_watchdog();
+	/* to see wdog_dd->watchdog_task status */
+	sched_show_task(wdog_dd->watchdog_task);
+	/* send stop IPI to see what happens on other cores */
+	smp_send_stop();
+
+	dev_info(wdog_dd->dev, "Watchdog pet_timer on cpu %d, expires = 0x%llx, jiffies = 0x%llx\n",
+			get_cpu_where_timer_on(&wdog_dd->pet_timer), wdog_dd->pet_timer.expires, jiffies);
+#endif
 	qcom_wdt_trigger_bite();
 
 	return IRQ_HANDLED;
@@ -951,6 +993,10 @@ static int qcom_wdt_init(struct msm_watchdog_data *wdog_dd,
 	wdog_dd->last_pet = sched_clock();
 	wdog_dd->enabled = true;
 
+#if IS_ENABLED(CONFIG_SEC_DEBUG)
+	sec_debug_save_last_pet(wdog_dd->last_pet);
+#endif
+
 	qcom_wdt_init_sysfs(wdog_dd);
 
 	if (wdog_dd->irq_ppi)
@@ -1045,3 +1091,14 @@ EXPORT_SYMBOL(qcom_wdt_register);
 
 MODULE_DESCRIPTION("QCOM Watchdog Driver Core");
 MODULE_LICENSE("GPL v2");
+
+#if IS_ENABLED(CONFIG_SEC_USER_RESET_DEBUG_TEST)
+void force_watchdog_bark(void)
+{
+	wdog_data->bark_time = 3000;
+	wdog_data->ops->set_bark_time(wdog_data->bark_time, wdog_data);
+	pr_err("%s force set bark time [%d]\n", __func__, wdog_data->bark_time);
+}
+EXPORT_SYMBOL(force_watchdog_bark);
+#endif
+

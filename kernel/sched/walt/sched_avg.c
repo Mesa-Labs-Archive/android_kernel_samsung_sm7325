@@ -10,6 +10,9 @@
 #include <linux/hrtimer.h>
 #include <linux/sched.h>
 #include <linux/math64.h>
+#if IS_ENABLED(CONFIG_SEC_INPUT_BOOSTER)
+#include <linux/pm_qos.h>
+#endif
 
 #include "qc_vas.h"
 #include <trace/events/sched.h>
@@ -130,7 +133,12 @@ void sched_update_hyst_times(void)
 		coloc_busy_pct = sysctl_sched_coloc_busy_hyst_cpu_busy_pct[cpu];
 		per_cpu(hyst_time, cpu) = (BIT(cpu)
 			     & sysctl_sched_busy_hyst_enable_cpus) ?
-			     sysctl_sched_busy_hyst : 0;
+#if IS_ENABLED(CONFIG_SEC_INPUT_BOOSTER)
+			     max(sysctl_sched_busy_hyst,
+				    (unsigned int)(pm_qos_request(PM_QOS_BIAS_HYST) * NSEC_PER_MSEC)) : 0;
+#else
+				 sysctl_sched_busy_hyst : 0;
+#endif
 		per_cpu(coloc_hyst_time, cpu) = ((BIT(cpu)
 			     & sysctl_sched_coloc_busy_hyst_enable_cpus)
 			     && rtgb_active) ?

@@ -21,6 +21,9 @@
 #include <dsp/q6voice.h>
 
 #include "msm-pcm-voice-v2.h"
+#ifdef CONFIG_SEC_SND_ADAPTATION
+#include "sec_voice_adaptation.h"
+#endif
 
 #define DRV_NAME "msm-pcm-voice-v2"
 
@@ -764,6 +767,9 @@ static int msm_pcm_voice_probe(struct snd_soc_component *component)
 					ARRAY_SIZE(msm_voice_controls));
 	snd_soc_add_component_controls(component, msm_voice_rec_config_controls,
 				    ARRAY_SIZE(msm_voice_rec_config_controls));
+#ifdef CONFIG_SEC_SND_ADAPTATION
+	sec_voice_adaptation_add_controls(component);
+#endif
 	return 0;
 }
 

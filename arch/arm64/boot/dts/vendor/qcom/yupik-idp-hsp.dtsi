@@ -1,4 +1,3 @@
-#include "yupik-idp.dtsi"
 #include "qcx6490-cnss.dtsi"
 
 &wlan {

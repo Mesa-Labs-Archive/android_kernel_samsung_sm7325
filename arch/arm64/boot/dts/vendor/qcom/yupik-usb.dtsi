@@ -49,7 +49,6 @@
 			0x144 /* GSI_RING_BASE_ADDR_H */
 			0x1a4>; /* GSI_IF_STS */
 		qcom,dwc-usb3-msm-tx-fifo-size = <21288>;
-		usb-role-switch;
 		extcon = <&eud>;
 
 		interconnect-names = "usb-ddr", "usb-ipa", "ddr-usb";
@@ -69,8 +68,6 @@
 			snps,has-lpm-erratum;
 			snps,hird-threshold = /bits/ 8 <0x0>;
 			snps,is-utmi-l1-suspend;
-			snps,dis-u1-entry-quirk;
-			snps,dis-u2-entry-quirk;
 			snps,dis_u2_susphy_quirk;
 			snps,ssp-u3-u0-quirk;
 			tx-fifo-resize;
@@ -133,9 +130,6 @@
 		resets = <&gcc GCC_USB3_DP_PHY_PRIM_BCR>,
 			<&gcc GCC_USB3_PHY_PRIM_BCR>;
 		reset-names = "global_phy_reset", "phy_reset";
-
-		pinctrl-names = "default";
-		pinctrl-0 = <&usb3phy_portselect_default>;
 
 		qcom,qmp-phy-reg-offset =
 			<USB3_DP_PCS_PCS_STATUS1

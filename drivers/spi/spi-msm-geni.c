@@ -2027,6 +2027,12 @@ static int spi_geni_probe(struct platform_device *pdev)
 
 		rsc->geni_gpio_active = pinctrl_lookup_state(rsc->geni_pinctrl,
 							PINCTRL_DEFAULT);
+#if defined(CONFIG_NFC_FEATURE_SN100U)
+		if (of_property_read_bool(pdev->dev.of_node, "secnfc,pinctrl_active")) {
+			rsc->geni_gpio_active = pinctrl_lookup_state(rsc->geni_pinctrl,
+					"active");
+		}
+#endif
 		if (IS_ERR_OR_NULL(rsc->geni_gpio_active)) {
 			dev_err(&pdev->dev, "No default config specified!\n");
 			ret = PTR_ERR(rsc->geni_gpio_active);
@@ -2041,12 +2047,18 @@ static int spi_geni_probe(struct platform_device *pdev)
 			goto spi_geni_probe_err;
 		}
 
+#if defined(CONFIG_NFC_FEATURE_SN100U)
+		if (!of_property_read_bool(pdev->dev.of_node, "secnfc,pinctrl_skip_sleep")) {
+#endif
 		ret = pinctrl_select_state(rsc->geni_pinctrl,
 						rsc->geni_gpio_sleep);
 		if (ret) {
 			dev_err(&pdev->dev, "Failed to set sleep configuration\n");
 			goto spi_geni_probe_err;
 		}
+#if defined(CONFIG_NFC_FEATURE_SN100U)
+		}
+#endif
 
 		rsc->se_clk = devm_clk_get(&pdev->dev, "se-clk");
 		if (IS_ERR(rsc->se_clk)) {

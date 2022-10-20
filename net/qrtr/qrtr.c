@@ -20,6 +20,10 @@
 #include <uapi/linux/sched/types.h>
 #include <soc/qcom/boot_stats.h>
 
+#if IS_ENABLED(CONFIG_MSM_SUBSYSTEM_RESTART)
+#include <soc/qcom/subsystem_restart.h>
+#endif
+
 #include "qrtr.h"
 
 #define QRTR_LOG_PAGE_CNT 4
@@ -1937,6 +1941,21 @@ static int qrtr_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
 	case SIOCSIFNETMASK:
 		rc = -EINVAL;
 		break;
+#if IS_ENABLED(CONFIG_MSM_SUBSYSTEM_RESTART)
+	case IPC_SUB_IOCTL_SUBSYS_GET_RESTART: 
+	{
+		struct msm_ipc_subsys_request subsys_req;
+
+		rc = copy_from_user(&subsys_req, (void *)arg, sizeof(subsys_req));
+		if (rc) {
+			rc = -EFAULT;
+			break;
+		}
+
+		rc = subsys_force_stop(&subsys_req);
+		break;	
+	}
+#endif		
 	default:
 		rc = -ENOIOCTLCMD;
 		break;

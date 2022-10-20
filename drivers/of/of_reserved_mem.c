@@ -67,6 +67,25 @@ void __init fdt_reserved_mem_save_node(unsigned long node, const char *uname,
 	return;
 }
 
+static phys_addr_t __init get_dt_size(const char *size_name, const char *uname, unsigned long node)
+{
+	int len;
+	const __be32 *prop;
+	phys_addr_t size;
+
+	prop = of_get_flat_dt_prop(node, size_name, &len);
+	if (!prop)
+		return 0;
+
+	if (len != dt_root_size_cells * sizeof(__be32)) {
+		pr_err("invalid %s property in '%s' node.\n", size_name, uname);
+		return 0;
+	}
+	size = dt_mem_next_cell(dt_root_size_cells, &prop);
+
+	return size;
+}
+
 /**
  * res_mem_alloc_size() - allocate reserved memory described by 'size', 'align'
  *			  and 'alloc-ranges' properties
@@ -91,6 +110,12 @@ static int __init __reserved_mem_alloc_size(unsigned long node,
 		return -EINVAL;
 	}
 	size = dt_mem_next_cell(dt_root_size_cells, &prop);
+
+	if (!size) {
+		phys_addr_t non_gki_size = get_dt_size("non_gki_size", uname, node);
+		if (non_gki_size > 0)
+			size = non_gki_size;
+	}
 
 	nomap = of_get_flat_dt_prop(node, "no-map", NULL) != NULL;
 
@@ -256,9 +281,10 @@ void __init fdt_init_reserved_mem(void)
 		int len;
 		const __be32 *prop;
 		int err = 0;
-		int nomap;
+		int nomap, reusable;
 
 		nomap = of_get_flat_dt_prop(node, "no-map", NULL) != NULL;
+		reusable = of_get_flat_dt_prop(node, "reusable", NULL) != NULL;
 		prop = of_get_flat_dt_prop(node, "phandle", &len);
 		if (!prop)
 			prop = of_get_flat_dt_prop(node, "linux,phandle", &len);
@@ -276,6 +302,14 @@ void __init fdt_init_reserved_mem(void)
 				memblock_free(rmem->base, rmem->size);
 				if (nomap)
 					memblock_add(rmem->base, rmem->size);
+			} else {
+#ifdef CONFIG_ION_RBIN_HEAP
+				if (of_get_flat_dt_prop(node, "ion,recyclable", NULL))
+					reusable = true;
+#endif
+				memblock_memsize_record(rmem->name, rmem->base,
+							rmem->size, nomap,
+							reusable);
 			}
 		}
 	}

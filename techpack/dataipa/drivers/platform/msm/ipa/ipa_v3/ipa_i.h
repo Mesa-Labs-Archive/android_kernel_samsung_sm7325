@@ -511,6 +511,7 @@ struct ipa_rx_page_data {
 	struct page *page;
 	dma_addr_t dma_addr;
 	bool is_tmp_alloc;
+	u32 page_order;
 };
 
 struct ipa3_active_client_htable_entry {
@@ -1445,6 +1446,7 @@ struct ipa3_stats {
 	u32 flow_disable;
 	u32 tx_non_linear;
 	u32 rx_page_drop_cnt;
+	u64 lower_order;
 	struct ipa3_page_recycle_stats page_recycle_stats[2];
 };
 

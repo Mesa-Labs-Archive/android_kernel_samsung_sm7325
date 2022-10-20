@@ -4654,7 +4654,7 @@ int gsi_alloc_channel_ee(unsigned int chan_idx, unsigned int ee, int *code)
 		GSI_EE_n_GSI_EE_GENERIC_CMD_OFFS(gsi_ctx->per.ee));
 
 	res = wait_for_completion_timeout(&gsi_ctx->gen_ee_cmd_compl,
-		msecs_to_jiffies(GSI_CMD_TIMEOUT));
+		GSI_CMD_TIMEOUT);
 	if (res == 0) {
 		GSIERR("chan_idx=%u ee=%u timed out\n", chan_idx, ee);
 		res = -GSI_STATUS_TIMED_OUT;
@@ -4731,7 +4731,7 @@ int gsi_enable_flow_control_ee(unsigned int chan_idx, unsigned int ee,
 		GSI_EE_n_GSI_EE_GENERIC_CMD_OFFS(gsi_ctx->per.ee));
 
 	res = wait_for_completion_timeout(&gsi_ctx->gen_ee_cmd_compl,
-		msecs_to_jiffies(GSI_CMD_TIMEOUT));
+		GSI_CMD_TIMEOUT);
 	if (res == 0) {
 		GSIERR("chan_idx=%u ee=%u timed out\n", chan_idx, ee);
 		res = -GSI_STATUS_TIMED_OUT;
@@ -4829,7 +4829,7 @@ int gsi_flow_control_ee(unsigned int chan_idx, unsigned int ee,
 		GSI_EE_n_GSI_EE_GENERIC_CMD_OFFS(gsi_ctx->per.ee));
 
 	res = wait_for_completion_timeout(&gsi_ctx->gen_ee_cmd_compl,
-		msecs_to_jiffies(GSI_CMD_TIMEOUT));
+		GSI_CMD_TIMEOUT);
 	if (res == 0) {
 		GSIERR("chan_idx=%u ee=%u timed out\n", chan_idx, ee);
 		GSIERR("GSI_EE_n_CNTXT_GLOB_IRQ_EN_OFFS = 0x%x\n",
@@ -4918,7 +4918,7 @@ int gsi_query_flow_control_state_ee(unsigned int chan_idx, unsigned int ee,
 		GSI_EE_n_GSI_EE_GENERIC_CMD_OFFS(gsi_ctx->per.ee));
 
 	res = wait_for_completion_timeout(&gsi_ctx->gen_ee_cmd_compl,
-		msecs_to_jiffies(GSI_CMD_TIMEOUT));
+		GSI_CMD_TIMEOUT);
 	if (res == 0) {
 		GSIERR("chan_idx=%u ee=%u timed out\n", chan_idx, ee);
 		res = -GSI_STATUS_TIMED_OUT;

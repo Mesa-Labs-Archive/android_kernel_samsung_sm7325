@@ -1190,6 +1190,10 @@ static bool rcu_start_this_gp(struct rcu_node *rnp_start, struct rcu_data *rdp,
 	trace_rcu_this_gp(rnp, rdp, gp_seq_req, TPS("Startedroot"));
 	WRITE_ONCE(rcu_state.gp_flags, rcu_state.gp_flags | RCU_GP_FLAG_INIT);
 	rcu_state.gp_req_activity = jiffies;
+	WRITE_ONCE(rcu_state.gp_req_activity_ts, ktime_get_ns());
+	WRITE_ONCE(rcu_state.gp_req_activity_task, current);
+	WRITE_ONCE(rcu_state.gp_req_activity_last_gp_flag, rcu_state.gp_flags);
+
 	if (!rcu_state.gp_kthread) {
 		trace_rcu_this_gp(rnp, rdp, gp_seq_req, TPS("NoGPkthread"));
 		goto unlock_out;
@@ -1243,11 +1247,17 @@ static void rcu_gp_kthread_wake(void)
 	if ((current == rcu_state.gp_kthread &&
 	     !in_irq() && !in_serving_softirq()) ||
 	    !READ_ONCE(rcu_state.gp_flags) ||
-	    !rcu_state.gp_kthread)
+	    !rcu_state.gp_kthread) {
+			WRITE_ONCE(rcu_state.last_skip_flag, READ_ONCE(rcu_state.gp_flags));
+			WRITE_ONCE(rcu_state.last_skip_task, current);
+			WRITE_ONCE(rcu_state.last_skip_ts, ktime_get_ns());
 		return;
+	}
 	WRITE_ONCE(rcu_state.gp_wake_time, jiffies);
 	WRITE_ONCE(rcu_state.gp_wake_seq, READ_ONCE(rcu_state.gp_seq));
 	swake_up_one(&rcu_state.gp_wq);
+	WRITE_ONCE(rcu_state.gp_wake_task, current);
+	WRITE_ONCE(rcu_state.gp_wake_time_ts, ktime_get_ns());
 }
 
 /*
@@ -1765,6 +1775,9 @@ static void rcu_gp_cleanup(void)
 	if ((offloaded || !rcu_accelerate_cbs(rnp, rdp)) && needgp) {
 		WRITE_ONCE(rcu_state.gp_flags, RCU_GP_FLAG_INIT);
 		rcu_state.gp_req_activity = jiffies;
+		WRITE_ONCE(rcu_state.gp_req_activity_ts, ktime_get_ns());
+		WRITE_ONCE(rcu_state.gp_req_activity_task, current);
+		WRITE_ONCE(rcu_state.gp_req_activity_last_gp_flag, rcu_state.gp_flags);
 		trace_rcu_grace_period(rcu_state.name,
 				       READ_ONCE(rcu_state.gp_seq),
 				       TPS("newreq"));
@@ -1780,6 +1793,8 @@ static void rcu_gp_cleanup(void)
  */
 static int __noreturn rcu_gp_kthread(void *unused)
 {
+	int timeout = 0;
+
 	rcu_bind_gp_kthread();
 	for (;;) {
 
@@ -1789,9 +1804,13 @@ static int __noreturn rcu_gp_kthread(void *unused)
 					       READ_ONCE(rcu_state.gp_seq),
 					       TPS("reqwait"));
 			rcu_state.gp_state = RCU_GP_WAIT_GPS;
-			swait_event_idle_exclusive(rcu_state.gp_wq,
+			timeout = swait_event_idle_timeout_exclusive(rcu_state.gp_wq,
 					 READ_ONCE(rcu_state.gp_flags) &
-					 RCU_GP_FLAG_INIT);
+					 RCU_GP_FLAG_INIT, 100 * HZ);
+
+			if (timeout == 0)
+				pr_err("[%s] wake up due to timeout\n", __func__);
+
 			rcu_state.gp_state = RCU_GP_DONE_GPS;
 			/* Locking provides needed memory barrier. */
 			if (rcu_gp_init())

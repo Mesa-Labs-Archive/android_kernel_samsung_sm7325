@@ -196,3 +196,21 @@ config SCSI_UFS_CRYPTO_QTI
 	 Enable Vendor Crypto Engine Support in UFS
 	 Enabling this allows kernel to use UFS crypto operations defined
 	 and implemented by QTI.
+
+config SEC_UFS_WB_FEATURE
+	tristate "SEC specific UFS Write Booster Support"
+	depends on SCSI_UFSHCD_QTI
+	help
+	 Enable Samsung Write Booster feature support
+	 Enabling this allows kernel to use SEC WB feature defined
+	 and implemented by SEC.
+
+config SCSI_UFS_TEST_MODE
+       bool "Samsung UFS TEST feature"
+       depends on SCSI_UFSHCD && SCSI_UFSHCD_PLATFORM
+       help
+         This selects support for test mode for debugging.
+         Select this option if this feature is needed on working.
+
+	 If unsure, say N.
+

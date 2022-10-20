@@ -42,6 +42,9 @@
 #include "sde_connector.h"
 #include "dp_drm.h"
 #include "dp_debug.h"
+#if defined(CONFIG_SEC_DISPLAYPORT)
+#include "secdp.h"
+#endif
 
 #define DP_MST_DEBUG(fmt, ...) DP_DEBUG(fmt, ##__VA_ARGS__)
 #define DP_MST_INFO(fmt, ...) DP_DEBUG(fmt, ##__VA_ARGS__)
@@ -526,6 +529,7 @@ static struct edid *dp_mst_sim_get_edid(struct drm_connector *connector,
 		if (mst->simulator.port_edids[i].valid &&
 				mst->simulator.port_edids[i].port_number ==
 				port->port_num) {
+			DP_DEBUG("+++\n");
 			return drm_edid_duplicate((struct edid *)
 					(mst->simulator.port_edids[i].edid));
 		}

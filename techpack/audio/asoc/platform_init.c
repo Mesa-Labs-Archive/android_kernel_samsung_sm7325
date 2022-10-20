@@ -27,12 +27,18 @@ static int __init audio_platform_init(void)
 	msm_pcm_voice_init();
 	msm_pcm_voip_init();
 	msm_transcode_loopback_init();
+#ifdef CONFIG_SEC_SND_ADAPTATION
+	sec_soc_audio_platform_init();
+#endif /* CONFIG_SEC_SND_ADAPTATION */
 
 	return 0;
 }
 
 static void audio_platform_exit(void)
 {
+#ifdef CONFIG_SEC_SND_ADAPTATION
+	sec_soc_audio_platform_exit();
+#endif /* CONFIG_SEC_SND_ADAPTATION */
 	msm_transcode_loopback_exit();
 	msm_pcm_voip_exit();
 	msm_pcm_voice_exit();

@@ -22,6 +22,9 @@
 #include "msm_kms.h"
 #include "sde_trace.h"
 #include <drm/drm_atomic_uapi.h>
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+#include "ss_dsi_panel_common.h"
+#endif
 
 #define MULTIPLE_CONN_DETECTED(x) (x > 1)
 
@@ -208,6 +211,23 @@ msm_disable_outputs(struct drm_device *dev, struct drm_atomic_state *old_state)
 			funcs->disable(encoder);
 		else
 			funcs->dpms(encoder, DRM_MODE_DPMS_OFF);
+
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+		{
+			/*
+				notify registered clients about suspend event
+				This noti is triggered before panel power off & DSI_CMD_SET_OFF.
+			*/
+			int blank = FB_BLANK_POWERDOWN;
+
+			if (encoder->encoder_type == DRM_MODE_ENCODER_DSI &&
+				(connector->state->crtc &&
+				connector->state->crtc->state->active_changed))
+				__msm_drm_notifier_call_chain(FB_EVENT_BLANK, &blank);
+			else
+				pr_debug("%s %d\n", __func__, encoder->encoder_type);
+		}
+#endif
 
 		drm_bridge_post_disable(encoder->bridge);
 	}
@@ -430,6 +450,24 @@ static void msm_atomic_helper_commit_modeset_enables(struct drm_device *dev,
 			funcs->enable(encoder);
 		else
 			funcs->commit(encoder);
+
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+		{
+			/*
+				notify registered clients about resume event.
+				This noti is triggered after panel power on & DSI_CMD_SET_ON.
+			*/
+			int blank = FB_BLANK_UNBLANK;
+
+			/* notify only in case state is changed (off -> on) */
+			if (encoder->encoder_type == DRM_MODE_ENCODER_DSI &&
+				(connector->state->crtc &&
+				connector->state->crtc->state->active_changed))
+				__msm_drm_notifier_call_chain(FB_EVENT_BLANK, &blank);
+			else
+				pr_debug("%s %d\n", __func__, encoder->encoder_type);
+		}
+#endif
 	}
 
 	if (kms && kms->funcs && kms->funcs->commit) {
@@ -492,6 +530,11 @@ int msm_atomic_prepare_fb(struct drm_plane *plane,
 	return msm_framebuffer_prepare(new_state->fb, kms->aspace);
 }
 
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+int ss_get_vdd_ndx_from_state(struct drm_atomic_state *old_state);
+#endif
+
+extern int dbg_cnt;
 /* The (potentially) asynchronous part of the commit.  At this point
  * nothing can fail short of armageddon.
  */
@@ -501,6 +544,14 @@ static void complete_commit(struct msm_commit *c)
 	struct drm_device *dev = state->dev;
 	struct msm_drm_private *priv = dev->dev_private;
 	struct msm_kms *kms = priv->kms;
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+	int ndx;
+	struct samsung_display_driver_data *vdd;
+#endif
+
+	if (dbg_cnt) {
+		SDE_DBG_DUMP("all", "dbg_bus", "vbif_dbg_bus", "panic");
+	}
 
 	drm_atomic_helper_wait_for_fences(dev, state, false);
 
@@ -527,6 +578,13 @@ static void complete_commit(struct msm_commit *c)
 	 */
 
 	msm_atomic_wait_for_commit_done(dev, state);
+
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+	ndx = ss_get_vdd_ndx_from_state(state);
+	vdd = ss_get_vdd(ndx);
+	if (vdd)
+		ss_event_frame_update_post(vdd);
+#endif
 
 	drm_atomic_helper_cleanup_planes(dev, state);
 
@@ -658,10 +716,22 @@ int msm_atomic_commit(struct drm_device *dev,
 	struct drm_plane_state *old_plane_state, *new_plane_state;
 	int i, ret;
 
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+	struct samsung_display_driver_data *vdd;
+	int ndx;
+#endif
+
 	if (!priv || priv->shutdown_in_progress) {
 		DRM_ERROR("priv is null or shutdwon is in-progress\n");
 		return -EINVAL;
 	}
+
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+	ndx = ss_get_vdd_ndx_from_state(state);
+	vdd = ss_get_vdd(ndx);
+	if (vdd)
+		ss_event_frame_update_pre(vdd);
+#endif
 
 	SDE_ATRACE_BEGIN("atomic_commit");
 	ret = drm_atomic_helper_prepare_planes(dev, state);

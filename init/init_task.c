@@ -12,6 +12,7 @@
 #include <linux/audit.h>
 #include <linux/numa.h>
 #include <linux/scs.h>
+#include <linux/task_integrity.h>
 
 #include <asm/pgtable.h>
 #include <linux/uaccess.h>
@@ -50,6 +51,11 @@ static struct sighand_struct init_sighand = {
 	.signalfd_wqh	= __WAIT_QUEUE_HEAD_INITIALIZER(init_sighand.signalfd_wqh),
 };
 
+#ifdef CONFIG_FIVE
+static struct task_integrity init_integrity =
+					INIT_TASK_INTEGRITY(init_integrity);
+#endif
+
 /*
  * Set up the first task table, touch at your own risk!. Base=0,
  * limit=0x1fffff (=2MB)
@@ -75,9 +81,9 @@ struct task_struct init_task
 	.cpus_mask	= CPU_MASK_ALL,
 	.nr_cpus_allowed= NR_CPUS,
 #ifdef CONFIG_SCHED_WALT
+	.wts		= {0, },
 	.wts		= {
 		.cpus_requested	= CPU_MASK_ALL,
-		.wake_up_idle	= false,
 	},
 #endif
 	.mm		= NULL,
@@ -189,6 +195,7 @@ struct task_struct init_task
 #ifdef CONFIG_SECURITY
 	.security	= NULL,
 #endif
+	INIT_INTEGRITY(init_task)
 };
 EXPORT_SYMBOL(init_task);
 

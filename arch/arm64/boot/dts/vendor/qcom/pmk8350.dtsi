@@ -201,6 +201,11 @@
 			};
 		};
 
+		pmk8350_sdam_3: sdam@7200 {
+			compatible = "qcom,spmi-sdam";
+			reg = <0x7200>;
+		};
+
 		pmk8350_sdam_5: sdam@7400 {
 			compatible = "qcom,spmi-sdam";
 			reg = <0x7400>;

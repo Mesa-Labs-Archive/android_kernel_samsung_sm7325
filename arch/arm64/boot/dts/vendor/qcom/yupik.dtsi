@@ -35,7 +35,7 @@
 	#size-cells = <2>;
 
 	chosen {
-		bootargs = "log_buf_len=256K earlycon=msm_geni_serial,0x994000 rcupdate.rcu_expedited=1 rcu_nocbs=0-7 kpti=off";
+		bootargs = "log_buf_len=256K rcupdate.rcu_expedited=1 rcu_nocbs=0-7 kpti=off cgroup.memory=nokmem";
 	};
 
 	memory { device_type = "memory"; reg = <0 0 0 0>; };
@@ -51,7 +51,7 @@
 		mboxes = <&qmp_aop 0>;
 	};
 
-	aliases {
+	aliases: aliases {
 		ufshc1 = &ufshc_mem; /* Embedded UFS Slot */
 		sdhc0 = &sdhc_1; /*SDC1 eMMC slot*/
 		sdhc1 = &sdhc_2; /* SDC2 SD card slot */
@@ -351,11 +351,6 @@
 		reg = <0x0 0x81800000 0x0 0x1e00000>;
 	};
 
-	pil_cvp_mem: camera@86200000 {
-		no-map;
-		reg = <0x0 0x86200000 0x0 0x500000>;
-	};
-
 	pil_adsp_mem: adsp@86700000 {
 		no-map;
 		reg = <0x0 0x86700000 0x0 0x2800000>;
@@ -450,14 +445,6 @@
 		size = <0x0 0x1400000>;
 	};
 
-	non_secure_display_memory: non_secure_display_region {
-		compatible = "shared-dma-pool";
-		alloc-ranges = <0x0 0x00000000 0x0 0xffffffff>;
-		reusable;
-		alignment = <0x0 0x400000>;
-		size = <0x0 0x6400000>;
-	};
-
 	splash_memory:splash_region {
 		reg = <0x0 0xe1000000 0x0 0x02400000>;
 		label = "cont_splash_region";
@@ -477,13 +464,6 @@
 		reusable;
 		alignment = <0 0x400000>;
 		size = <0 0x8c00000>;
-	};
-
-	qcom: ramoops {
-		compatible = "ramoops";
-		reg = <0x0 0xa9000000 0x0 0x200000>;
-		pmsg-size = <0x200000>;
-		mem-type = <2>;
 	};
 
 	/* global autoconfigured region for contiguous allocations */
@@ -2354,7 +2334,7 @@
 		};
 	};
 
-	qcom,msm-imem@146aa000 {
+	msm_imem: qcom,msm-imem@146aa000 {
 		compatible = "qcom,msm-imem";
 		reg = <0x146aa000 0x1000>;
 		ranges = <0x0 0x146aa000 0x1000>;
@@ -3764,14 +3744,6 @@
 			qcom,can-sleep;
 		};
 
-		qcom,pm8350b-debug@3 {
-			compatible = "qcom,spmi-pmic";
-			reg = <3 SPMI_USID>;
-			#address-cells = <2>;
-			#size-cells = <0>;
-			qcom,can-sleep;
-		};
-
 		qcom,pmr735a-debug@5 {
 			compatible = "qcom,spmi-pmic";
 			reg = <4 SPMI_USID>;
@@ -4439,6 +4411,8 @@
 		qcom,bus-bw-vectors-bps = <0 400000 25000000 50000000
 			100000000 200000000 4294967295>;
 
+		qcom,restore-after-cx-collapse;
+
 		/* DLL HSR settings. Refer go/hsr - <Target> DLL settings */
 		qcom,dll-hsr-list = <0x0007642c 0x0 0x10 0x2C010800 0x80040868>;
 
@@ -5092,6 +5066,7 @@
 		qcom,fastrpc-adsp-audio-pdr;
 		qcom,fastrpc-adsp-sensors-pdr;
 		qcom,rpc-latency-us = <235>;
+		qcom,secure-domains = <0x0F>;
 		qcom,fastrpc-gids = <2908>;
 		qcom,qos-cores = <0 1 2 3>;
 

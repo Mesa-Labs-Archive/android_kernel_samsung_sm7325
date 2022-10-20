@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (C) 2013 Red Hat
  * Author: Rob Clark <robdclark@gmail.com>
  *
@@ -36,6 +36,15 @@
 #include "sde_vbif.h"
 #include "sde_plane.h"
 #include "sde_color_processing.h"
+
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+#include "sde_encoder.h"
+#include "../samsung/ss_dsi_panel_common.h"
+#include "../../../../drivers/gpu/msm/kgsl_device.h"
+#ifdef CONFIG_SEC_DEBUG
+#include <linux/sec_debug.h>
+#endif
+#endif
 
 #define SDE_DEBUG_PLANE(pl, fmt, ...) SDE_DEBUG("plane%d " fmt,\
 		(pl) ? (pl)->base.base.id : -1, ##__VA_ARGS__)
@@ -629,6 +638,30 @@ int sde_plane_wait_input_fence(struct drm_plane *plane, uint32_t wait_ms)
 						PLANE_PROP_INPUT_FENCE));
 				psde->is_error = true;
 				sde_kms_timeline_status(plane->dev);
+#if defined(CONFIG_DISPLAY_SAMSUNG) && defined(CONFIG_SEC_DEBUG)
+				{
+					struct dma_fence *tout_fence = input_fence;
+
+					pr_info("DPCI Logging for fence timeout\n");
+					ss_inc_ftout_debug(tout_fence->ops->get_timeline_name(tout_fence));
+				}
+#if 0
+				/* msm-sde: DEBUG force panic when fence timeout (Case 04926910)
+				- to debug ANR w/ fence timeout 
+				*/
+				{
+					struct kgsl_device *device = kgsl_get_device(0);
+
+					mutex_lock(&device->mutex);
+					if (kgsl_state_is_awake(device)) {
+						device->force_panic = 1;
+						kgsl_device_snapshot(device, NULL, false);
+					} else
+						printk("KGSL device is not awake\n");
+					mutex_unlock(&device->mutex);
+				}
+#endif
+#endif
 				ret = -ETIMEDOUT;
 				break;
 			case -ERESTARTSYS:
@@ -3716,7 +3749,7 @@ static void _sde_plane_install_properties(struct drm_plane *plane,
 	psde->catalog = catalog;
 	is_master = !psde->is_virtual;
 
-	info = kzalloc(sizeof(struct sde_kms_info), GFP_KERNEL);
+	info = vzalloc(sizeof(struct sde_kms_info));
 	if (!info) {
 		SDE_ERROR("failed to allocate info memory\n");
 		return;
@@ -3795,7 +3828,7 @@ static void _sde_plane_install_properties(struct drm_plane *plane,
 			ARRAY_SIZE(e_fb_translation_mode), 0,
 			PLANE_PROP_FB_TRANSLATION_MODE);
 
-	kfree(info);
+	vfree(info);
 }
 
 static inline void _sde_plane_set_csc_v1(struct sde_plane *psde,

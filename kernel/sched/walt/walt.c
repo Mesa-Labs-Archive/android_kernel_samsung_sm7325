@@ -3860,3 +3860,11 @@ unlock:
 	mutex_unlock(&mutex);
 	return ret;
 }
+
+#if IS_ENABLED(CONFIG_SEC_DEBUG)
+int get_num_clusters(void)
+{
+	return num_sched_clusters;
+}
+#endif
+

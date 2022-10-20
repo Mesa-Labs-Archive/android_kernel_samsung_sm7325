@@ -29,6 +29,13 @@
 
 #include <net/netfilter/nf_conntrack_tuple.h>
 
+// SEC_PRODUCT_FEATURE_KNOX_SUPPORT_NPA {
+#ifdef CONFIG_KNOX_NCM
+#define PROCESS_NAME_LEN_NAP	128
+#define DOMAIN_NAME_LEN_NAP		255
+#endif
+// SEC_PRODUCT_FEATURE_KNOX_SUPPORT_NPA }
+
 #ifdef CONFIG_NF_CONNTRACK_SIP_SEGMENTATION
 #define SIP_LIST_ELEMENTS       2
 #endif
@@ -76,6 +83,29 @@ struct nf_conntrack_net {
 #ifdef CONFIG_IP_NF_TARGET_NATTYPE_MODULE
 #include <linux/netfilter_ipv4/ipt_NATTYPE.h>
 #endif
+
+// SEC_PRODUCT_FEATURE_KNOX_SUPPORT_NPA {
+#ifdef CONFIG_KNOX_NCM
+struct nf_conn_npa_vendor_data {
+	__u64		knox_sent;
+	__u64		knox_recv;
+	uid_t		knox_uid;
+	pid_t		knox_pid;
+	uid_t		knox_puid;
+	__u64		open_time;
+	char		process_name[PROCESS_NAME_LEN_NAP];
+	char		parent_process_name[PROCESS_NAME_LEN_NAP];
+	char		domain_name[DOMAIN_NAME_LEN_NAP];
+	pid_t		knox_ppid;
+	char		interface_name[IFNAMSIZ];
+	atomic_t	startFlow;
+	u32			npa_timeout;
+	atomic_t	intermediateFlow;
+};
+
+#define NF_CONN_NPA_VENDOR_DATA_GET(nf_conn) ((struct nf_conn_npa_vendor_data*)((nf_conn)->android_vendor_data1))
+#endif
+// SEC_PRODUCT_FEATURE_KNOX_SUPPORT_NPA }
 
 struct nf_conn {
 	/* Usage count in here is 1 for hash table, 1 per skb,

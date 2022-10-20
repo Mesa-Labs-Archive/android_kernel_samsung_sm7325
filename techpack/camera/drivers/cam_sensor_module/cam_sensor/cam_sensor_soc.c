@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2017-2019, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/of.h>
@@ -11,6 +11,129 @@
 #include <cam_req_mgr_util.h>
 #include "cam_sensor_soc.h"
 #include "cam_soc_util.h"
+
+#if defined(CONFIG_CAMERA_SYSFS_V2)
+extern char rear_cam_info[150];
+extern char front_cam_info[150];
+#if defined(CONFIG_SAMSUNG_FRONT_DUAL)
+extern char front2_cam_info[150];
+#endif
+#if defined(CONFIG_SAMSUNG_FRONT_TOP)
+#if defined(CONFIG_SAMSUNG_FRONT_DUAL)
+extern char front3_cam_info[150];
+#else
+extern char front2_cam_info[150];
+#endif
+#endif
+
+#if defined(CONFIG_SAMSUNG_REAR_DUAL)
+extern char rear2_cam_info[150];
+#endif
+#if defined(CONFIG_SAMSUNG_REAR_TRIPLE)
+extern char rear3_cam_info[150];
+#endif
+#if defined(CONFIG_SAMSUNG_REAR_QUADRA)
+extern char rear4_cam_info[150];
+#endif
+
+struct caminfo_element {
+	char* property_name;
+	char* prefix;
+	char* values[32];
+};
+
+struct caminfo_element caminfos[] = {
+	{ "cam,isp",            "ISP",      { "INT", "EXT", "SOC" }     },
+	{ "cam,cal_memory",     "CALMEM",   { "N", "Y", "Y", "Y" }      },
+	{ "cam,read_version",   "READVER",  { "SYSFS", "CAMON" }        },
+	{ "cam,core_voltage",   "COREVOLT", { "N", "Y" }                },
+	{ "cam,upgrade",        "UPGRADE",  { "N", "SYSFS", "CAMON" }   },
+	{ "cam,fw_write",       "FWWRITE",  { "N", "OIS", "SD", "ALL" } },
+	{ "cam,fw_dump",        "FWDUMP",   { "N", "Y" }                },
+	{ "cam,companion_chip", "CC",       { "N", "Y" }                },
+	{ "cam,ois",            "OIS",      { "N", "Y" }                },
+	{ "cam,valid",          "VALID",    { "N", "Y" }                },
+	{ "cam,dual_open",      "DUALOPEN", { "N", "Y" }                },
+};
+
+int cam_sensor_get_dt_camera_info(
+	struct cam_sensor_ctrl_t *s_ctrl,
+	struct device_node *of_node)
+{
+	int rc = 0, i = 0, idx = 0, offset = 0, cnt = 0;
+	char* cam_info = NULL;
+	bool isValid = false;
+
+	/* camera information */
+	if (s_ctrl->id == SEC_WIDE_SENSOR)
+		cam_info = rear_cam_info;
+	else if (s_ctrl->id == SEC_FRONT_SENSOR)
+		cam_info = front_cam_info;
+#if defined(CONFIG_SAMSUNG_REAR_DUAL)
+	else if (s_ctrl->id == SEC_ULTRA_WIDE_SENSOR)
+		cam_info = rear2_cam_info;
+#endif
+#if defined(CONFIG_SAMSUNG_REAR_TRIPLE)
+	else if (s_ctrl->id == SEC_TELE_SENSOR)
+		cam_info = rear3_cam_info;
+#if defined (CONFIG_SEC_M52XQ_PROJECT)
+	else if (s_ctrl->id == SEC_MACRO_SENSOR)
+		cam_info = rear3_cam_info;
+#endif
+#endif
+#if defined(CONFIG_SAMSUNG_REAR_QUADRA)
+	else if (s_ctrl->id == SEC_TELE2_SENSOR)
+		cam_info = rear4_cam_info;
+#if defined (CONFIG_SEC_A52SXQ_PROJECT) || defined(CONFIG_SEC_A73XQ_PROJECT)
+	else if (s_ctrl->id == SEC_MACRO_SENSOR)
+		cam_info = rear4_cam_info;
+#endif
+#endif
+#if defined(CONFIG_SAMSUNG_FRONT_DUAL)
+	else if (s_ctrl->id == SEC_FRONT_AUX1_SENSOR)
+		cam_info = front2_cam_info;
+#endif
+#if defined(CONFIG_SAMSUNG_FRONT_TOP)
+	else if (s_ctrl->id == SEC_FRONT_TOP_SENSOR)
+#if defined(CONFIG_SAMSUNG_FRONT_DUAL)
+		cam_info = front3_cam_info;
+#else
+		cam_info = front2_cam_info;
+#endif
+#endif
+	else
+		cam_info = NULL;
+
+	if (cam_info == NULL)
+		return 0;
+
+	memset(cam_info, 0, sizeof(char) * 150);
+
+	for (i = 0; i < ARRAY_SIZE(caminfos); i++) {
+		if (caminfos[i].property_name == NULL)
+			continue;
+
+		rc = of_property_read_u32(of_node,
+			caminfos[i].property_name, &idx);
+		if (rc < 0) {
+			CAM_ERR(CAM_SENSOR, "failed");
+			goto ERROR1;
+		}
+
+		isValid = (idx >= 0) && (idx < ARRAY_SIZE(caminfos[i].values));
+		cnt = scnprintf(&cam_info[offset], PAGE_SIZE, "%s=%s;",
+			caminfos[i].prefix, (isValid ? caminfos[i].values[idx] : "NULL"));
+		offset += cnt;
+	}
+	cam_info[offset] = '\0';
+
+	return 0;
+
+ERROR1:
+	strcpy(cam_info, "ISP=NULL;CALMEM=NULL;READVER=NULL;COREVOLT=NULL;UPGRADE=NULL;FWWRITE=NULL;FWDUMP=NULL;FW_CC=NULL;OIS=NULL;DUALOPEN=NULL");
+	return rc;
+}
+#endif
 
 int32_t cam_sensor_get_sub_module_index(struct device_node *of_node,
 	struct cam_sensor_board_info *s_info)
@@ -203,6 +326,14 @@ static int32_t cam_sensor_driver_get_dt_data(struct cam_sensor_ctrl_t *s_ctrl)
 		sensordata->pos_yaw = 360;
 	}
 
+#if defined(CONFIG_CAMERA_SYSFS_V2)
+	cam_sensor_get_dt_camera_info(s_ctrl, of_node);
+	if (rc < 0) {
+		CAM_ERR(CAM_SENSOR, "fail, cell-index %d rc %d",
+			s_ctrl->id, rc);
+	}
+#endif
+
 	return rc;
 
 FREE_SENSOR_DATA:
@@ -268,11 +399,6 @@ int32_t cam_sensor_parse_dt(struct cam_sensor_ctrl_t *s_ctrl)
 			return rc;
 		}
 	}
-
-	rc = cam_sensor_util_regulator_powerup(soc_info);
-	if (rc < 0)
-		return rc;
-
 	rc = msm_sensor_init_default_params(s_ctrl);
 	if (rc < 0) {
 		CAM_ERR(CAM_SENSOR,

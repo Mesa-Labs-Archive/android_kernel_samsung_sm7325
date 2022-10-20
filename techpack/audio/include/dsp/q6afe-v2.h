@@ -6,6 +6,9 @@
 #define __Q6AFE_V2_H__
 #include <dsp/apr_audio-v2.h>
 #include <dsp/rtac.h>
+#if defined(CONFIG_SND_SOC_TFA9878)
+#include <ipc/apr_tal.h>
+#endif
 
 #define IN			0x000
 #define OUT			0x001
@@ -62,6 +65,34 @@
 #define BAP_BROADCAST        2
 #define BAP_BA_SIMULCAST     3
 
+#if defined(CONFIG_SND_SOC_TFA9878)
+/*Module ID*/
+#define AFE_MODULE_ID_TFADSP          0x1000B910
+
+/*Param ID*/
+#define AFE_PARAM_ID_TFADSP_SEND_MSG  0x1000B921
+#define AFE_PARAM_ID_TFADSP_READ_MSG  0x1000B922
+#define AFE_PARAM_ID_TFADSP_RESP_MSG  0x1000B922
+
+#define AFE_OPCODE_TFADSP_STATUS      0x00010B01
+#define AFE_EVENT_TFADSP_STATE_INIT   0x1
+#define AFE_EVENT_TFADSP_STATE_CLOSE  0x2
+#define AFE_EVENT_TFADSP_STATE_CONFIGURED 0x3
+#define AFE_EVENT_TFADSP_RX_MODULE_DISABLED 0x4
+#define AFE_EVENT_TFADSP_TX_MODULE_DISABLED 0x5
+
+#define AFE_RX_MODULE_ID_TFADSP 0x1000B900
+#define AFE_TX_MODULE_ID_TFADSP 0x1000B901
+#define AFE_RX_NONE_TOPOLOGY 0x000112fc
+
+#if defined(AFE_TFADSP_SHARED_MEM_IPC)
+/*APR packet max size: 4KB*/
+#define AFE_APR_MAX_PKT_SIZE  4096
+#else
+// in case of CONFIG_MSM_QDSP6_APRV2_GLINK/APRV3_GLINK, with smaller APR_MAX_BUF (512)
+#define AFE_APR_MAX_PKT_SIZE  APR_MAX_BUF
+#endif
+#endif // CONFIG_SND_SOC_TFA9878
 
 typedef int (*routing_cb)(int port);
 
@@ -460,6 +491,14 @@ struct aanc_data {
 	int level;
 };
 
+#if defined(CONFIG_SND_SOC_TFA9878)
+/*afe tfa dsp read message*/
+struct afe_tfa_dsp_read_msg_t {
+	struct apr_hdr hdr;
+	struct afe_rtac_get_param_v2 get_param;
+} __packed;
+#endif // CONFIG_SND_SOC_TFA9878
+
 int afe_open(u16 port_id, union afe_port_config *afe_config, int rate);
 int afe_close(int port_id);
 int afe_loopback(u16 enable, u16 rx_port, u16 tx_port);
@@ -519,6 +558,13 @@ int afe_spk_prot_get_calib_data(struct afe_spkr_prot_get_vi_calib *calib);
 int afe_port_stop_nowait(int port_id);
 int afe_apply_gain(u16 port_id, u16 gain);
 int afe_q6_interface_prepare(void);
+int afe_q6_update_dyn_bitrate(uint32_t bitrate);
+int afe_q6_slimbus_update_dyn_bitrate(uint32_t bitrate);
+int afe_q6_update_sbm(struct asm_sbm_param_t *sbm_param);
+int afe_q6_slimbus_update_sbm(struct asm_sbm_param_t *sbm_param);
+int afe_q6_update_mtu(int mtu);
+int afe_q6_update_a2dp_suspend(int a2dp_suspend);
+int afe_q6_update_enc_format(uint32_t enc_format);
 int afe_get_port_type(u16 port_id);
 int q6afe_audio_client_buf_alloc_contiguous(unsigned int dir,
 			struct afe_audio_client *ac,
@@ -592,6 +638,11 @@ int afe_port_send_logging_cfg(u16 port_id,
 	struct afe_param_id_port_data_log_disable_t *log_disable);
 int afe_get_av_dev_drift(struct afe_param_id_dev_timing_stats *timing_stats,
 		u16 port);
+#if defined(CONFIG_SND_SOC_TFA9878)
+int afe_tfadsp_read(void *dev, int buf_size, unsigned char *buf);
+int afe_tfadsp_write(void *dev, int buf_size, const char *buf);
+int afe_tfadsp_setup(int port_id);
+#endif
 int afe_get_sp_rx_tmax_xmax_logging_data(
 		struct afe_sp_rx_tmax_xmax_logging_param *xt_logging,
 		u16 port_id);

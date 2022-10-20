@@ -414,10 +414,10 @@ long cam_soc_util_get_clk_round_rate(struct cam_hw_soc_info *soc_info,
  * @return:         Success or failure
  */
 static int cam_soc_util_set_clk_rate(struct clk *clk, const char *clk_name,
-	int64_t clk_rate, unsigned long *applied_clk_rate)
+	int64_t clk_rate)
 {
 	int rc = 0;
-	long clk_rate_round = -1;
+	long clk_rate_round;
 
 	if (!clk || !clk_name)
 		return -EINVAL;
@@ -453,9 +453,6 @@ static int cam_soc_util_set_clk_rate(struct clk *clk, const char *clk_name,
 			return rc;
 		}
 	}
-
-	if (applied_clk_rate)
-		*applied_clk_rate = clk_rate_round;
 
 	return rc;
 }
@@ -505,8 +502,7 @@ int cam_soc_util_set_src_clk_rate(struct cam_hw_soc_info *soc_info,
 	}
 
 	rc = cam_soc_util_set_clk_rate(clk,
-		soc_info->clk_name[src_clk_idx], clk_rate,
-		&soc_info->applied_src_clk_rate);
+		soc_info->clk_name[src_clk_idx], clk_rate);
 	if (rc) {
 		CAM_ERR(CAM_UTIL,
 			"SET_RATE Failed: src clk: %s, rate %lld, dev_name = %s rc: %d",
@@ -526,8 +522,7 @@ int cam_soc_util_set_src_clk_rate(struct cam_hw_soc_info *soc_info,
 		clk = soc_info->clk[scl_clk_idx];
 		rc = cam_soc_util_set_clk_rate(clk,
 			soc_info->clk_name[scl_clk_idx],
-			soc_info->clk_rate[apply_level][scl_clk_idx],
-			NULL);
+			soc_info->clk_rate[apply_level][scl_clk_idx]);
 		if (rc) {
 			CAM_WARN(CAM_UTIL,
 			"SET_RATE Failed: scl clk: %s, rate %d dev_name = %s, rc: %d",
@@ -634,15 +629,14 @@ int cam_soc_util_get_option_clk_by_name(struct cam_hw_soc_info *soc_info,
 }
 
 int cam_soc_util_clk_enable(struct clk *clk, const char *clk_name,
-	int32_t clk_rate, unsigned long *applied_clock_rate)
+	int32_t clk_rate)
 {
 	int rc = 0;
 
 	if (!clk || !clk_name)
 		return -EINVAL;
 
-	rc = cam_soc_util_set_clk_rate(clk, clk_name, clk_rate,
-		applied_clock_rate);
+	rc = cam_soc_util_set_clk_rate(clk, clk_name, clk_rate);
 	if (rc)
 		return rc;
 
@@ -680,9 +674,8 @@ int cam_soc_util_clk_disable(struct clk *clk, const char *clk_name)
 int cam_soc_util_clk_enable_default(struct cam_hw_soc_info *soc_info,
 	enum cam_vote_level clk_level)
 {
-	int                          i, rc = 0;
-	enum cam_vote_level          apply_level;
-	unsigned long                applied_clk_rate;
+	int i, rc = 0;
+	enum cam_vote_level apply_level;
 
 	if ((soc_info->num_clk == 0) ||
 		(soc_info->num_clk >= CAM_SOC_MAX_CLK)) {
@@ -702,14 +695,9 @@ int cam_soc_util_clk_enable_default(struct cam_hw_soc_info *soc_info,
 	for (i = 0; i < soc_info->num_clk; i++) {
 		rc = cam_soc_util_clk_enable(soc_info->clk[i],
 			soc_info->clk_name[i],
-			soc_info->clk_rate[apply_level][i],
-			&applied_clk_rate);
+			soc_info->clk_rate[apply_level][i]);
 		if (rc)
 			goto clk_disable;
-
-		if (i == soc_info->src_clk_idx)
-			soc_info->applied_src_clk_rate = applied_clk_rate;
-
 		if (soc_info->cam_cx_ipeak_enable) {
 			CAM_DBG(CAM_UTIL,
 			"dev name = %s clk name = %s idx = %d\n"
@@ -963,11 +951,10 @@ end:
 }
 
 int cam_soc_util_set_clk_rate_level(struct cam_hw_soc_info *soc_info,
-	enum cam_vote_level clk_level, bool do_not_set_src_clk)
+	enum cam_vote_level clk_level)
 {
 	int i, rc = 0;
 	enum cam_vote_level apply_level;
-	unsigned long applied_clk_rate;
 
 	if ((soc_info->num_clk == 0) ||
 		(soc_info->num_clk >= CAM_SOC_MAX_CLK)) {
@@ -985,20 +972,9 @@ int cam_soc_util_set_clk_rate_level(struct cam_hw_soc_info *soc_info,
 		cam_cx_ipeak_update_vote_cx_ipeak(soc_info, apply_level);
 
 	for (i = 0; i < soc_info->num_clk; i++) {
-		if (do_not_set_src_clk && (i == soc_info->src_clk_idx)) {
-			CAM_DBG(CAM_UTIL, "Skipping set rate for src clk %s",
-				soc_info->clk_name[i]);
-			continue;
-		}
-
-		CAM_DBG(CAM_UTIL, "Set rate for clk %s rate %d",
-			soc_info->clk_name[i],
-			soc_info->clk_rate[apply_level][i]);
-
 		rc = cam_soc_util_set_clk_rate(soc_info->clk[i],
 			soc_info->clk_name[i],
-			soc_info->clk_rate[apply_level][i],
-			&applied_clk_rate);
+			soc_info->clk_rate[apply_level][i]);
 		if (rc < 0) {
 			CAM_DBG(CAM_UTIL,
 				"dev name = %s clk_name = %s idx = %d\n"
@@ -1009,13 +985,11 @@ int cam_soc_util_set_clk_rate_level(struct cam_hw_soc_info *soc_info,
 				cam_cx_ipeak_update_vote_cx_ipeak(soc_info, 0);
 			break;
 		}
-
-		if (i == soc_info->src_clk_idx)
-			soc_info->applied_src_clk_rate = applied_clk_rate;
 	}
 
 	return rc;
 };
+
 
 static int cam_soc_util_get_dt_gpio_req_tbl(struct device_node *of_node,
 	struct cam_soc_gpio_data *gconf, uint16_t *gpio_array,

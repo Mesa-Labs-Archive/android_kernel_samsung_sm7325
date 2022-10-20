@@ -257,6 +257,10 @@ struct dp_catalog {
 
 	struct dp_catalog_sub *sub;
 
+#if defined(CONFIG_SEC_DISPLAYPORT)
+	struct dp_parser *parser;
+#endif
+
 	void (*set_exe_mode)(struct dp_catalog *dp_catalog, char *mode);
 	int (*get_reg_dump)(struct dp_catalog *dp_catalog,
 		char *mode, u8 **out_buf, u32 *out_buf_len);

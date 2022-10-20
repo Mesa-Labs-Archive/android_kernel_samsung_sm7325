@@ -115,6 +115,9 @@ struct cam_actuator_ctrl_t {
 	struct cam_actuator_query_cap act_info;
 	struct actuator_intf_params bridge_intf;
 	uint32_t last_flush_req;
+#if defined(CONFIG_SAMSUNG_OIS_MCU_STM32)
+	uint32_t use_mcu;
+#endif
 };
 
 /**
