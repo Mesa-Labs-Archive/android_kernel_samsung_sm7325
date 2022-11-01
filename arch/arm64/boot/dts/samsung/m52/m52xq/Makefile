@@ -22,6 +22,17 @@ m52xq_swa_ins_w00_r01.dtbo-base := ../../../vendor/qcom/yupik.dtb
 dtbo-$(CONFIG_MACH_M52XQ_SWA_INS) += m52xq_swa_ins_w00_r00.dtbo
 m52xq_swa_ins_w00_r00.dtbo-base := ../../../vendor/qcom/yupik.dtb
 
+dtbo-$(CONFIG_MACH_M52XQ_CIS_SER) += m52xq_cis_ser_w00_r05.dtbo
+m52xq_cis_ser_w00_r05.dtbo-base := ../../../vendor/qcom/yupik.dtb
+dtbo-$(CONFIG_MACH_M52XQ_CIS_SER) += m52xq_cis_ser_w00_r03.dtbo
+m52xq_cis_ser_w00_r03.dtbo-base := ../../../vendor/qcom/yupik.dtb
+dtbo-$(CONFIG_MACH_M52XQ_CIS_SER) += m52xq_cis_ser_w00_r02.dtbo
+m52xq_cis_ser_w00_r02.dtbo-base := ../../../vendor/qcom/yupik.dtb
+dtbo-$(CONFIG_MACH_M52XQ_CIS_SER) += m52xq_cis_ser_w00_r01.dtbo
+m52xq_cis_ser_w00_r01.dtbo-base := ../../../vendor/qcom/yupik.dtb
+dtbo-$(CONFIG_MACH_M52XQ_CIS_SER) += m52xq_cis_ser_w00_r00.dtbo
+m52xq_cis_ser_w00_r00.dtbo-base := ../../../vendor/qcom/yupik.dtb
+
 ifeq ($(CONFIG_BUILD_ARM64_DT_OVERLAY),y)
 
 define __sec_dtbo_build
