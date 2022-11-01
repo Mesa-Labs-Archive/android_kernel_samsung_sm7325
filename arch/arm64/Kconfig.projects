@@ -18,6 +18,13 @@ config MACH_A52SXQ_KOR_SINGLE
 	help
 	  Support for Samsung A52SXQ KOR SINGLE device.
 
+config MACH_A52SXQ_CHN_TW
+	default n
+	bool "Samsung A52SXQ CHN TW"
+	depends on SEC_A52SXQ_PROJECT
+	help
+	  Support for Samsung A52SXQ CHN TW device.
+
 config SEC_M52XQ_PROJECT
 	default n
 	bool "Samsung M52XQ Project"
