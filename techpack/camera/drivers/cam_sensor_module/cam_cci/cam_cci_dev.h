@@ -41,6 +41,7 @@
 #define CCI_MAX_DELAY 1000000
 
 #define CCI_TIMEOUT msecs_to_jiffies(1500)
+#define CCI_TIMEOUT_100ms msecs_to_jiffies(100)
 #define NUM_QUEUES 2
 
 #define MSM_CCI_WRITE_DATA_PAYLOAD_SIZE_11 11
@@ -65,7 +66,6 @@
 #define CAM_CCI_TIMEOUT_DUMP_EN   BIT(2)
 
 #define CCI_VERSION_1_2_9 0x10020009
-#define REPORT_IDSIZE 16
 enum cci_i2c_sync {
 	MSM_SYNC_DISABLE,
 	MSM_SYNC_ENABLE,

@@ -42,6 +42,10 @@ void msm_dai_q6_exit(void);
 void msm_dai_q6_hdmi_exit(void);
 void msm_fe_dai_exit(void);
 void msm_compress_dsp_exit(void);
+#ifdef CONFIG_SEC_SND_ADAPTATION
+int sec_soc_audio_platform_init(void);
+void sec_soc_audio_platform_exit(void);
+#endif /* CONFIG_SEC_SND_ADAPTATION */
 
 #if IS_ENABLED(CONFIG_WCD9XXX_CODEC_CORE)
 int msm_dai_slim_init(void);

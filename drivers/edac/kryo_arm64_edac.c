@@ -19,6 +19,10 @@
 #include "edac_mc.h"
 #include "edac_device.h"
 
+#if IS_ENABLED(CONFIG_SEC_USER_RESET_DEBUG)
+#include <linux/sec_debug.h>
+#endif
+
 #ifdef CONFIG_EDAC_KRYO_ARM64_PANIC_ON_UE
 #define ARM64_ERP_PANIC_ON_UE 1
 #else
@@ -140,6 +144,99 @@ struct erp_drvdata {
 static struct erp_drvdata *panic_handler_drvdata;
 
 static DEFINE_SPINLOCK(local_handler_lock);
+
+#if IS_ENABLED(CONFIG_SEC_USER_RESET_DEBUG)
+static ap_health_t *p_health;
+static ap_health_t tmp_health;
+enum {
+	ID_L1_CACHE = 0,
+	ID_L2_CACHE,
+	ID_L3_CACHE,
+	ID_BUS_ERR,
+};
+
+static int update_arm64_edac_count(int cpu, int block, int etype)
+{
+	if (cpu < 0 || cpu >= num_present_cpus()) {
+		edac_printk(KERN_CRIT, EDAC_CPU, "%s : not available cpu = %d\n", __func__, cpu);
+		return -1;
+	}
+
+	if (p_health) {
+		switch (block) {
+			case ID_L1_CACHE:
+				if (etype == KRYO_L1_CE) {
+					p_health->cache.edac[cpu][block].ce_cnt++;
+					p_health->daily_cache.edac[cpu][block].ce_cnt++;
+				} else if (etype == KRYO_L1_UE) {
+					p_health->cache.edac[cpu][block].ue_cnt++;
+					p_health->daily_cache.edac[cpu][block].ue_cnt++;
+				}
+				break;
+			case ID_L2_CACHE:
+				if (etype == KRYO_L2_CE) {
+					p_health->cache.edac[cpu][block].ce_cnt++;
+					p_health->daily_cache.edac[cpu][block].ce_cnt++;
+				} else if (etype == KRYO_L2_UE) {
+					p_health->cache.edac[cpu][block].ue_cnt++;
+					p_health->daily_cache.edac[cpu][block].ue_cnt++;
+				}
+				break;
+			case ID_L3_CACHE:
+				if (etype == KRYO_L3_CE) {
+					p_health->cache.edac_l3.ce_cnt++;
+					p_health->daily_cache.edac_l3.ce_cnt++;
+				} else if (etype == KRYO_L3_UE) {
+					p_health->cache.edac_l3.ue_cnt++;
+					p_health->daily_cache.edac_l3.ue_cnt++;
+				}
+				break;
+			case ID_BUS_ERR:
+				p_health->cache.edac_bus_cnt++;
+				p_health->daily_cache.edac_bus_cnt++;
+				break;
+		}
+		ap_health_data_write(p_health);
+	} else {
+		tmp_health.header.magic = AP_HEALTH_MAGIC;
+		switch (block) {
+			case ID_L1_CACHE:
+				if (etype == KRYO_L1_CE) {
+					tmp_health.cache.edac[cpu][block].ce_cnt++;
+					tmp_health.daily_cache.edac[cpu][block].ce_cnt++;
+				} else if (etype == KRYO_L1_UE) {
+					tmp_health.cache.edac[cpu][block].ue_cnt++;
+					tmp_health.daily_cache.edac[cpu][block].ue_cnt++;
+				}
+				break;
+			case ID_L2_CACHE:
+				if (etype == KRYO_L2_CE) {
+					tmp_health.cache.edac[cpu][block].ce_cnt++;
+					tmp_health.daily_cache.edac[cpu][block].ce_cnt++;
+				} else if (etype == KRYO_L2_UE) {
+					tmp_health.cache.edac[cpu][block].ue_cnt++;
+					tmp_health.daily_cache.edac[cpu][block].ue_cnt++;
+				}
+				break;
+			case ID_L3_CACHE:
+				if (etype == KRYO_L3_CE) {
+					tmp_health.cache.edac_l3.ce_cnt++;
+					tmp_health.daily_cache.edac_l3.ce_cnt++;
+				} else if (etype == KRYO_L3_UE) {
+					tmp_health.cache.edac_l3.ue_cnt++;
+					tmp_health.daily_cache.edac_l3.ue_cnt++;
+				}
+				break;
+			case ID_BUS_ERR:
+				tmp_health.cache.edac_bus_cnt++;
+				tmp_health.daily_cache.edac_bus_cnt++;
+				break;
+		}
+	}
+
+	return 0;
+}
+#endif
 
 static void l1_l2_irq_enable(void *info)
 {
@@ -275,6 +372,13 @@ static void dump_err_reg(int errorcode, int level, u64 errxstatus, u64 errxmisc,
 		}
 	}
 
+#if IS_ENABLED(CONFIG_SEC_USER_RESET_DEBUG)
+	if (level == L3)
+		update_arm64_edac_count(0, level, errorcode);
+	else
+		update_arm64_edac_count(smp_processor_id(), level, errorcode);
+#endif
+
 	edac_printk(KERN_CRIT, EDAC_CPU, "Way: %d\n", way);
 	errors[errorcode].func(edev_ctl, smp_processor_id(),
 				level, errors[errorcode].msg);
@@ -382,6 +486,9 @@ static bool l3_is_bus_error(u64 errxstatus)
 {
 	if (KRYO_ERRXSTATUS_SERR(errxstatus) == BUS_ERROR) {
 		edac_printk(KERN_CRIT, EDAC_CPU, "Bus Error\n");
+#if IS_ENABLED(CONFIG_SEC_USER_RESET_DEBUG)
+		update_arm64_edac_count(0, ID_BUS_ERR, BUS_ERROR);
+#endif
 		return true;
 	}
 
@@ -509,6 +616,56 @@ static int kryo_cpu_edac_offline(unsigned int cpu)
 	return 0;
 }
 
+
+#if IS_ENABLED(CONFIG_SEC_USER_RESET_DEBUG)
+static int arm64_edac_dbg_part_notifier_callback(
+		struct notifier_block *nfb, unsigned long action, void *data)
+{
+	unsigned int cpu = 0, block = 0;
+
+	switch (action) {
+		case DBG_PART_DRV_INIT_DONE:
+			p_health = ap_health_data_read();
+			if (tmp_health.header.magic == AP_HEALTH_MAGIC) {
+				for (cpu = 0; cpu < num_present_cpus(); cpu++) {
+					for (block = 0; block <= ID_L2_CACHE; block++) {
+						p_health->cache.edac[cpu][block].ce_cnt +=
+							tmp_health.cache.edac[cpu][block].ce_cnt;
+						p_health->daily_cache.edac[cpu][block].ce_cnt +=
+							tmp_health.cache.edac[cpu][block].ce_cnt;
+					}
+				}
+				p_health->cache.edac_l3.ce_cnt +=
+					tmp_health.cache.edac_l3.ce_cnt;
+				p_health->daily_cache.edac_l3.ce_cnt +=
+					tmp_health.daily_cache.edac_l3.ce_cnt;
+				p_health->cache.edac_l3.ue_cnt +=
+					tmp_health.cache.edac_l3.ue_cnt;
+				p_health->daily_cache.edac_l3.ue_cnt +=
+					tmp_health.daily_cache.edac_l3.ue_cnt;
+				p_health->cache.edac_bus_cnt +=
+					tmp_health.cache.edac_bus_cnt;
+				p_health->daily_cache.edac_bus_cnt +=
+					tmp_health.daily_cache.edac_bus_cnt;
+
+				ap_health_data_write(p_health);
+
+				pr_info("ap_health edac updated\n");
+				memset((void *)&tmp_health, 0, sizeof(ap_health_t));
+			}
+			break;
+		default:
+			return NOTIFY_DONE;
+	}
+
+	return NOTIFY_OK;
+}
+
+static struct notifier_block arm64_edac_dbg_part_notifier = {
+	.notifier_call = arm64_edac_dbg_part_notifier_callback,
+};
+#endif
+
 static int kryo_cpu_erp_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
@@ -594,6 +751,10 @@ static int kryo_cpu_erp_probe(struct platform_device *pdev)
 
 	edac_online = rc;
 	cpu_pm_register_notifier(&(drv->nb_pm));
+#if IS_ENABLED(CONFIG_SEC_USER_RESET_DEBUG)
+	memset((void *)&tmp_health, 0, sizeof(ap_health_t));
+	dbg_partition_notifier_register(&arm64_edac_dbg_part_notifier);
+#endif
 
 	return 0;
 

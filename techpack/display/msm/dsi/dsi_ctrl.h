@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  */
 
 #ifndef _DSI_CTRL_H_
@@ -52,6 +52,11 @@
 
 /* max size supported for dsi cmd transfer using TPG */
 #define DSI_CTRL_MAX_CMD_FIFO_STORE_SIZE 64
+
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+/* max size supported for dsi cmd transfer using DMA */
+#define DSI_CTRL_MAX_CMD_FET_MEMORY_SIZE 200
+#endif
 
 /*Default tearcheck window size as programmed by MDP*/
 #define TEARCHECK_WINDOW_SIZE	5
@@ -228,8 +233,6 @@ struct dsi_ctrl_interrupts {
  *			  next TE for command mode.
  * @phy_isolation_enabled:    A boolean property allows to isolate the phy from
  *                          dsi controller and run only dsi controller.
- * @null_insertion_enabled:  A boolean property to allow dsi controller to
- *                           insert null packet.
  * @modeupdated:	  Boolean to send new roi if mode is updated.
  * @split_link_supported: Boolean to check if hw supports split link.
  * @enable_cmd_dma_stats: Boolean to indicate the verbose logging during
@@ -302,7 +305,6 @@ struct dsi_ctrl {
 	unsigned int error_interrupt_count;
 
 	bool phy_isolation_enabled;
-	bool null_insertion_enabled;
 	bool modeupdated;
 	bool split_link_supported;
 	bool enable_cmd_dma_stats;
@@ -587,6 +589,19 @@ int dsi_ctrl_cmd_transfer(struct dsi_ctrl *dsi_ctrl,
  * Return: error code.
  */
 int dsi_ctrl_cmd_tx_trigger(struct dsi_ctrl *dsi_ctrl, u32 flags);
+
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+/**
+ * dsi_ctrl_update_host_engine_state_for_cont_splash() - update engine
+ *                                 states for cont splash usecase
+ * @dsi_ctrl:              DSI controller handle.
+ * @state:                 DSI engine state
+ *
+ * Return: error code.
+ */
+int dsi_ctrl_update_host_engine_state_for_cont_splash(struct dsi_ctrl *dsi_ctrl,
+				enum dsi_engine_state state);
+#endif
 
 /**
  * dsi_ctrl_set_power_state() - set power state for dsi controller

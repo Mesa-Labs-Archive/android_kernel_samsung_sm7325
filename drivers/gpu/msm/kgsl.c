@@ -1299,9 +1299,9 @@ kgsl_sharedmem_find(struct kgsl_process_private *private, uint64_t gpuaddr)
 	if (!private)
 		return NULL;
 
-	if (!kgsl_mmu_gpuaddr_in_range(private->pagetable, gpuaddr) &&
+	if (!kgsl_mmu_gpuaddr_in_range(private->pagetable, gpuaddr, 0) &&
 		!kgsl_mmu_gpuaddr_in_range(
-			private->pagetable->mmu->securepagetable, gpuaddr))
+			private->pagetable->mmu->securepagetable, gpuaddr, 0))
 		return NULL;
 
 	spin_lock(&private->mem_lock);
@@ -2093,7 +2093,7 @@ long kgsl_ioctl_gpu_aux_command(struct kgsl_device_private *dev_priv,
 
 	cmdlist = u64_to_user_ptr(param->cmdlist);
 
-	 /* Create a draw object for KGSL_GPU_AUX_COMMAND_TIMELINE */
+	/* Create a draw object for KGSL_GPU_AUX_COMMAND_TIMELINE */
 	if (copy_struct_from_user(&generic, sizeof(generic),
 		cmdlist, param->cmdsize)) {
 		ret = -EFAULT;
@@ -2117,7 +2117,7 @@ long kgsl_ioctl_gpu_aux_command(struct kgsl_device_private *dev_priv,
 			u64_to_user_ptr(generic.priv), generic.size);
 		if (ret)
 			goto err;
-
+			
 	} else {
 		ret = -EINVAL;
 		goto err;
@@ -2571,15 +2571,6 @@ static int kgsl_setup_anon_useraddr(struct kgsl_pagetable *pagetable,
 }
 
 #ifdef CONFIG_DMA_SHARED_BUFFER
-static int match_file(const void *p, struct file *file, unsigned int fd)
-{
-	/*
-	 * We must return fd + 1 because iterate_fd stops searching on
-	 * non-zero return, but 0 is a valid fd.
-	 */
-	return (p == file) ? (fd + 1) : 0;
-}
-
 static void _setup_cache_mode(struct kgsl_mem_entry *entry,
 		struct vm_area_struct *vma)
 {
@@ -2616,8 +2607,6 @@ static int kgsl_setup_dmabuf_useraddr(struct kgsl_device *device,
 	vma = find_vma(current->mm, hostptr);
 
 	if (vma && vma->vm_file) {
-		int fd;
-
 		ret = check_vma_flags(vma, entry->memdesc.flags);
 		if (ret) {
 			up_read(&current->mm->mmap_sem);
@@ -2633,15 +2622,10 @@ static int kgsl_setup_dmabuf_useraddr(struct kgsl_device *device,
 			return -EFAULT;
 		}
 
-		/* Look for the fd that matches this the vma file */
-		fd = iterate_fd(current->files, 0, match_file, vma->vm_file);
-		if (fd != 0) {
-			dmabuf = dma_buf_get(fd - 1);
-			if (IS_ERR(dmabuf)) {
-				up_read(&current->mm->mmap_sem);
-				return PTR_ERR(dmabuf);
-			}
-		}
+		/* Take a refcount because dma_buf_put() decrements the refcount */
+		get_file(vma->vm_file);
+
+		dmabuf = vma->vm_file->private_data;
 	}
 
 	if (!dmabuf) {
@@ -4565,6 +4549,27 @@ void kgsl_device_platform_remove(struct kgsl_device *device)
 	_unregister_device(device);
 }
 
+#ifdef CONFIG_QCOM_KGSL
+static int kgsl_sharedmem_size_notifier(struct notifier_block *nb,
+					unsigned long action, void *data)
+{
+	struct seq_file *s;
+
+	s = (struct seq_file *)data;
+	if (s != NULL)
+		seq_printf(s, "KgslSharedmem:  %8lu kB\n",
+			atomic_long_read(&kgsl_driver.stats.page_alloc) >> 10);
+	else
+		pr_cont("KgslSharedmem:%lukB ",
+			atomic_long_read(&kgsl_driver.stats.page_alloc) >> 10);
+	return 0;
+}
+
+static struct notifier_block kgsl_sharedmem_size_nb = {
+	.notifier_call = kgsl_sharedmem_size_notifier,
+};
+#endif
+
 void kgsl_core_exit(void)
 {
 	kgsl_exit_page_pools();
@@ -4602,6 +4607,9 @@ void kgsl_core_exit(void)
 
 	kfree(memfree.list);
 	memset(&memfree, 0, sizeof(memfree));
+#ifdef CONFIG_QCOM_KGSL
+	show_mem_extra_notifier_unregister(&kgsl_sharedmem_size_nb);
+#endif
 
 	unregister_chrdev_region(kgsl_driver.major,
 		ARRAY_SIZE(kgsl_driver.devp));
@@ -4716,6 +4724,9 @@ int __init kgsl_core_init(void)
 	memfree.list = kcalloc(MEMFREE_ENTRIES, sizeof(struct memfree_entry),
 		GFP_KERNEL);
 
+#ifdef CONFIG_QCOM_KGSL
+	show_mem_extra_notifier_register(&kgsl_sharedmem_size_nb);
+#endif
 	place_marker("M - DRIVER KGSL Ready");
 
 	return 0;

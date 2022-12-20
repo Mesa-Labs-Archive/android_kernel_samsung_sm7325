@@ -1,4 +1,5 @@
 /*
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2014-2021 The Linux Foundation. All rights reserved.
  * Copyright (C) 2013 Red Hat
  * Author: Rob Clark <robdclark@gmail.com>
@@ -41,6 +42,9 @@
 #include "sde_core_perf.h"
 #include "sde_trace.h"
 #include "sde_vm.h"
+#if defined(CONFIG_DISPLAY_SAMSUNG) // case 04436106
+#include "ss_dsi_panel_debug.h"
+#endif
 
 #define SDE_PSTATES_MAX (SDE_STAGE_MAX * 4)
 #define SDE_MULTIRECT_PLANE_MAX (SDE_STAGE_MAX * 2)
@@ -2443,7 +2447,11 @@ static void sde_crtc_vblank_cb(void *data)
 
 	drm_crtc_handle_vblank(crtc);
 	DRM_DEBUG_VBL("crtc%d\n", crtc->base.id);
+#if defined(CONFIG_DISPLAY_SAMSUNG) // case 04436106
+	SDE_EVT32(DRMID(crtc));
+#else
 	SDE_EVT32_VERBOSE(DRMID(crtc));
+#endif
 }
 
 static void _sde_crtc_retire_event(struct drm_connector *connector,
@@ -2577,6 +2585,12 @@ static void _sde_crtc_set_input_fence_timeout(struct sde_crtc_state *cstate)
 	cstate->input_fence_timeout_ns =
 		sde_crtc_get_property(cstate, CRTC_PROP_INPUT_FENCE_TIMEOUT);
 	cstate->input_fence_timeout_ns *= NSEC_PER_MSEC;
+
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+	/* Increase fence timeout value to 20 sec (case 03381402 / P180412-02009) */
+	cstate->input_fence_timeout_ns *= 2;
+	SDE_DEBUG("input_fence_timeout_ns %llu \n", cstate->input_fence_timeout_ns);
+#endif
 }
 
 void _sde_crtc_clear_dim_layers_v1(struct drm_crtc_state *state)
@@ -3322,7 +3336,7 @@ static void sde_crtc_atomic_begin(struct drm_crtc *crtc,
 	_sde_crtc_blend_setup(crtc, old_state, true);
 	_sde_crtc_dest_scaler_setup(crtc);
 
-	if (crtc->state->mode_changed)
+	if (crtc->state->mode_changed || sde_kms->perf.catalog->uidle_cfg.dirty)
 		sde_core_perf_crtc_update_uidle(crtc, true);
 
 	/*
@@ -3477,6 +3491,7 @@ static void sde_crtc_destroy_state(struct drm_crtc *crtc,
 	struct sde_crtc_state *cstate;
 	struct drm_encoder *enc;
 	struct sde_kms *sde_kms;
+	u32 encoder_mask;
 
 	if (!crtc || !state) {
 		SDE_ERROR("invalid argument(s)\n");
@@ -3492,9 +3507,11 @@ static void sde_crtc_destroy_state(struct drm_crtc *crtc,
 		return;
 	}
 
-	SDE_DEBUG("crtc%d\n", crtc->base.id);
+	encoder_mask = state->encoder_mask ? state->encoder_mask :
+	crtc->state->encoder_mask;
+	SDE_DEBUG("crtc%d\n, encoder_mask=%d", crtc->base.id, encoder_mask);
 
-	drm_for_each_encoder_mask(enc, crtc->dev, state->encoder_mask)
+	drm_for_each_encoder_mask(enc, crtc->dev, encoder_mask)
 		sde_rm_release(&sde_kms->rm, enc, true);
 
 	__drm_atomic_helper_crtc_destroy_state(state);
@@ -3709,6 +3726,44 @@ int sde_crtc_reset_hw(struct drm_crtc *crtc, struct drm_crtc_state *old_state,
 	return !recovery_events ? 0 : -EAGAIN;
 }
 
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+#include "dsi_drm.h"
+#include "dsi_panel.h"
+#include "ss_dsi_panel_common.h"
+
+void ss_dfps_control(struct drm_crtc *crtc)
+{
+	struct drm_device *dev = crtc->dev;
+	struct drm_encoder *encoder = NULL;
+	struct dsi_bridge *c_bridge = NULL;
+	struct dsi_display *display = NULL;
+	struct samsung_display_driver_data *vdd = NULL;
+
+	list_for_each_entry(encoder, &dev->mode_config.encoder_list, head) {
+		if (encoder->crtc != crtc)
+			continue;
+
+		if (encoder->encoder_type == DRM_MODE_ENCODER_DSI) {
+			c_bridge = container_of(encoder->bridge, struct dsi_bridge, base);
+
+			if (c_bridge && (c_bridge->dsi_mode.dsi_mode_flags & DSI_MODE_FLAG_VRR)) {
+				display = c_bridge->display;
+
+				if (display && display->panel && display->panel->dfps_caps.type == DSI_DFPS_IMMEDIATE_VFP) {
+					vdd = (struct samsung_display_driver_data *)display->panel->panel_private;
+					if (vdd->panel_func.samsung_dfps_panel_update)
+						vdd->panel_func.samsung_dfps_panel_update(vdd, c_bridge->dsi_mode.timing.refresh_rate);
+					SDE_DEBUG("crtc%d fps : %d\n", crtc->base.id, c_bridge->dsi_mode.timing.refresh_rate);
+				}
+			}
+		}
+
+		c_bridge = NULL;
+		display = NULL;
+	}
+}
+#endif
+
 void sde_crtc_commit_kickoff(struct drm_crtc *crtc,
 		struct drm_crtc_state *old_state)
 {
@@ -3805,6 +3860,10 @@ void sde_crtc_commit_kickoff(struct drm_crtc *crtc,
 		_sde_crtc_blend_setup(crtc, old_state, false);
 	}
 
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+	ss_dfps_control(crtc);
+#endif
+
 	list_for_each_entry(encoder, &dev->mode_config.encoder_list, head) {
 		if (encoder->crtc != crtc)
 			continue;
@@ -3841,6 +3900,9 @@ static int _sde_crtc_vblank_enable(
 	struct drm_encoder *enc;
 
 	if (!sde_crtc) {
+#if defined(CONFIG_DISPLAY_SAMSUNG) // case 04436106
+		SS_XLOG_VSYNC(0x1111);
+#endif
 		SDE_ERROR("invalid crtc\n");
 		return -EINVAL;
 	}
@@ -3855,7 +3917,12 @@ static int _sde_crtc_vblank_enable(
 
 		ret = pm_runtime_get_sync(crtc->dev->dev);
 		if (ret < 0)
+		{
+#if defined(CONFIG_DISPLAY_SAMSUNG) // case 04436106
+			SS_XLOG_VSYNC(0x2222);
+#endif
 			return ret;
+		}
 
 		mutex_lock(&sde_crtc->crtc_lock);
 		drm_for_each_encoder_mask(enc, crtc->dev,
@@ -5155,6 +5222,9 @@ int sde_crtc_vblank(struct drm_crtc *crtc, bool en)
 
 	if (!crtc) {
 		SDE_ERROR("invalid crtc\n");
+#if defined(CONFIG_DISPLAY_SAMSUNG) // case 04436106
+		SS_XLOG_VSYNC(0x1111);
+#endif
 		return -EINVAL;
 	}
 	sde_crtc = to_sde_crtc(crtc);
@@ -5411,7 +5481,7 @@ static void sde_crtc_install_properties(struct drm_crtc *crtc,
 		return;
 	}
 
-	info = kzalloc(sizeof(struct sde_kms_info), GFP_KERNEL);
+	info = vzalloc(sizeof(struct sde_kms_info));
 	if (!info) {
 		SDE_ERROR("failed to allocate info memory\n");
 		return;
@@ -5495,7 +5565,7 @@ static void sde_crtc_install_properties(struct drm_crtc *crtc,
 			info->data, SDE_KMS_INFO_DATALEN(info),
 			CRTC_PROP_INFO);
 
-	kfree(info);
+	vfree(info);
 }
 
 static int _sde_crtc_get_output_fence(struct drm_crtc *crtc,

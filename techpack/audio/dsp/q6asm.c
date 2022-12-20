@@ -177,6 +177,15 @@ static int is_adsp_raise_event(uint32_t cmd)
 	}
 	return -EINVAL;
 }
+
+#ifdef CONFIG_SEC_SND_ADAPTATION
+struct audio_session *q6asm_get_audio_session(void)
+{
+	return session;
+}
+EXPORT_SYMBOL(q6asm_get_audio_session);
+#endif /* CONFIG_SEC_SND_ADAPTATION */
+
 static inline void q6asm_set_flag_in_token(union asm_token_struct *asm_token,
 					   int flag, int flag_offset)
 {

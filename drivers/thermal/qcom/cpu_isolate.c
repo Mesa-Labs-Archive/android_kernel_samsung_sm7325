@@ -185,6 +185,10 @@ static int cpu_isolate_set_cur_state(struct thermal_cooling_device *cdev,
 			(!cpumask_test_and_set_cpu(cpu,
 			&cpus_isolated_by_thermal))) {
 			mutex_unlock(&cpu_isolate_lock);
+#ifdef CONFIG_SEC_PM
+			pr_info("[debugging] %s: isolate cpu%d", __func__, cpu);
+			THERMAL_IPC_LOG("isolate cpu%d\n", cpu);
+#endif
 			if (sched_isolate_cpu(cpu))
 				cpumask_clear_cpu(cpu,
 					&cpus_isolated_by_thermal);
@@ -209,6 +213,10 @@ static int cpu_isolate_set_cur_state(struct thermal_cooling_device *cdev,
 		} else if (cpumask_test_and_clear_cpu(cpu,
 			&cpus_isolated_by_thermal)) {
 			mutex_unlock(&cpu_isolate_lock);
+#ifdef CONFIG_SEC_PM
+			pr_info("[debugging] %s: unisolate cpu%d", __func__, cpu);
+			THERMAL_IPC_LOG("unisolate cpu%d\n", cpu);
+#endif
 			sched_unisolate_cpu(cpu);
 			mutex_lock(&cpu_isolate_lock);
 		}

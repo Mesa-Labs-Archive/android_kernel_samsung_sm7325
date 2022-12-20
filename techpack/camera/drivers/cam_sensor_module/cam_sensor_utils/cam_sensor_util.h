@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2017-2020, The Linux Foundation. All rights reserved.
  */
 
 #ifndef _CAM_SENSOR_UTIL_H_
@@ -31,6 +31,62 @@
  */
 #define QTIMER_MUL_FACTOR   10000
 #define QTIMER_DIV_FACTOR   192
+
+#define HI847_SENSOR_ID   0x00
+#define SENSOR_ID_HI1336 0x0000
+
+#define SENSOR_ID_S5KGW1 0xf971
+#define SENSOR_ID_S5KGD2 0x0842
+
+static struct cam_sensor_i2c_reg_array gw1p_seamless_off[] = {
+	{0x6028, 0x2000, 0x00, 0x00},
+	{0x602A, 0x133C, 0x00, 0x00},
+	{0x6F12, 0x0000, 0x00, 0x00},
+	{0x6F12, 0x0000, 0x00, 0x00},
+	{0x0B30, 0x01FF, 0x00, 0x00},
+};
+
+#if defined(CONFIG_CAMERA_ADAPTIVE_MIPI)
+#define FRONT_SENSOR_ID_IMX374 0x0374
+#define FRONT_SENSOR_ID_S5K3J1 0x30A1
+#define FRONT_SENSOR_ID_IMX471 0x0471
+#define TOF_SENSOR_ID_IMX518 0x0518
+#define TOF_SENSOR_ID_IMX516 0x0516
+#define SENSOR_ID_IMX555 0x0555
+#define SENSOR_ID_IMX586 0x0586
+#define SENSOR_ID_IMX563 0x0563
+#define SENSOR_ID_S5K2LA 0x20CA
+#define SENSOR_ID_S5K2LD 0x20CD
+#define SENSOR_ID_S5KGW2 0x0972
+#define SENSOR_ID_S5KGH1 0x0881
+#define SENSOR_ID_S5K2L3 0x20C3
+#define SENSOR_ID_S5KHM1 0x1AD1
+#define SENSOR_ID_S5KHM3 0x1AD3
+#define SENSOR_ID_S5KHM6 0x1AD6
+#define SENSOR_ID_S5K3M5 0x30D5
+#define SENSOR_ID_S5K3J1 0x30A1
+#define SENSOR_ID_IMX258 0x0258
+#define SENSOR_ID_HI1337 0x0000
+#define SENSOR_ID_S5KGW3 0x7309
+#define SENSOR_ID_IMX682 0x0682
+
+
+#define INVALID_MIPI_INDEX -1
+#endif
+
+#define SENSOR_ID_GC5035 0x3540
+
+#if defined(CONFIG_SENSOR_RETENTION)
+#define SENSOR_RETENTION_READ_RETRY_CNT 10
+#define RETENTION_SENSOR_ID 0x1AD3
+#define STREAM_ON_ADDR   0x100
+
+enum sensor_retention_mode {
+	RETENTION_INIT = 0,
+	RETENTION_READY_TO_ON,
+	RETENTION_ON,
+};
+#endif
 
 int cam_get_dt_power_setting_data(struct device_node *of_node,
 	struct cam_hw_soc_info *soc_info,
@@ -84,4 +140,9 @@ int cam_sensor_bob_pwm_mode_switch(struct cam_hw_soc_info *soc_info,
 	int bob_reg_idx, bool flag);
 
 bool cam_sensor_util_check_gpio_is_shared(struct cam_hw_soc_info *soc_info);
+
+#if defined(CONFIG_SEC_P3Q_PROJECT)
+int cam_sensor_util_force_power_down(struct cam_sensor_power_ctrl_t *ctrl,
+		struct cam_hw_soc_info *soc_info);
+#endif
 #endif /* _CAM_SENSOR_UTIL_H_ */

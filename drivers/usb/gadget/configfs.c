@@ -10,6 +10,10 @@
 #include "u_f.h"
 #include "u_os_desc.h"
 
+#ifdef CONFIG_USB_NOTIFY_PROC_LOG
+#include <linux/usblog_proc_notify.h>
+#endif
+
 #ifdef CONFIG_USB_CONFIGFS_UEVENT
 #include <linux/platform_device.h>
 #include <linux/kdev_t.h>
@@ -534,6 +538,15 @@ static int config_usb_cfg_link(
 		goto out;
 	}
 
+#ifdef CONFIG_USB_NOTIFY_PROC_LOG
+	if (!strcmp(fi->fd->name, "gsi")) {
+		pr_info("usb: %s f->%s\n", __func__, f->name);
+		store_usblog_notify(NOTIFY_USBMODE, (char *)(f->name), NULL);
+	} else {
+		pr_info("usb: %s f->%s\n", __func__, fi->fd->name);
+		store_usblog_notify(NOTIFY_USBMODE, (char *)(fi->fd->name), NULL);
+	}
+#endif
 	/* stash the function until we bind it to the gadget */
 	list_add_tail(&f->list, &cfg->func_list);
 	ret = 0;

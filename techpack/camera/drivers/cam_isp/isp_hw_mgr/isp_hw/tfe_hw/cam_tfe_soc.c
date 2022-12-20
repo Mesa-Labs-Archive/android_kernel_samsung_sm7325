@@ -199,7 +199,7 @@ int cam_tfe_soc_enable_clk(struct cam_hw_soc_info *soc_info,
 
 	if (strcmp(clk_name, CAM_TFE_DSP_CLK_NAME) == 0) {
 		rc = cam_soc_util_clk_enable(soc_private->dsp_clk,
-			CAM_TFE_DSP_CLK_NAME, soc_private->dsp_clk_rate, NULL);
+			CAM_TFE_DSP_CLK_NAME, soc_private->dsp_clk_rate);
 		if (rc)
 			CAM_ERR(CAM_ISP,
 			"Error enable dsp clk failed rc=%d", rc);

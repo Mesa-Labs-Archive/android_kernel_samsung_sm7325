@@ -5,6 +5,8 @@ ccflags-y += -I$(srctree)/techpack/display/rotator
 ccflags-y += -I$(srctree)/techpack/display/hdcp
 ccflags-y += -I$(srctree)/drivers/clk/qcom/
 
+ccflags-$(CONFIG_DISPLAY_SAMSUNG) += -I$(srctree)/techpack/display/msm/samsung
+
 msm_drm-$(CONFIG_DRM_MSM_DP) += dp/dp_altmode.o \
 	dp/dp_parser.o \
 	dp/dp_power.o \
@@ -31,6 +33,15 @@ msm_drm-$(CONFIG_DRM_MSM_DP) += dp/dp_altmode.o \
 msm_drm-$(CONFIG_DRM_MSM_DP_MST) += dp/dp_mst_drm.o
 
 msm_drm-$(CONFIG_DRM_MSM_DP_USBPD_LEGACY) += dp/dp_usbpd.o
+
+# sec displayport
+msm_drm-$(CONFIG_SEC_DISPLAYPORT) += dp/secdp_sysfs.o \
+	dp/secdp_logger.o \
+	dp/secdp_unit_test.o
+
+msm_drm-$(CONFIG_SEC_DISPLAYPORT_AUX_CONTROL) += dp/secdp_aux_control.o
+
+msm_drm-$(CONFIG_SEC_DISPLAYPORT_BIGDATA) += dp/displayport_bigdata.o
 
 msm_drm-$(CONFIG_DRM_MSM_SDE) += sde/sde_crtc.o \
 	sde/sde_encoder.o \
@@ -158,3 +169,71 @@ msm_drm-$(CONFIG_MSM_SDE_ROTATOR) += ../rotator/sde_rotator_dev.o \
 obj-$(CONFIG_DISPLAY_BUILD)	+= msm_drm.o
 
 obj-$(CONFIG_DRM_FBDEV_EMULATION) += msm_fbdev.o
+
+
+msm_drm-$(CONFIG_DISPLAY_SAMSUNG) += samsung/PBA_BOOTING/ss_dsi_panel_PBA_BOOTING_fhd.o
+
+msm_drm-$(CONFIG_PANEL_S6E3FC3_AMS646YD01_LO_FHD) += samsung/S6E3FC3_AMS646YD01_LO/ss_dsi_panel_S6E3FC3_AMS646YD01_LO.o
+
+
+msm_drm-$(CONFIG_DISPLAY_SAMSUNG) += samsung/ss_dsi_panel_sysfs.o \
+	samsung/ss_dsi_panel_debug.o \
+	samsung/ss_dsi_panel_common.o \
+	samsung/ss_dsi_mdnie_lite_common.o \
+	samsung/ss_dsi_smart_dimming_common.o \
+	samsung/ss_interpolation_common.o \
+	samsung/ss_flash_table_data_common.o \
+	samsung/ss_dpui_common.o \
+	samsung/ss_ddi_poc_common.o \
+	samsung/ss_ddi_spi_common.o \
+	samsung/ss_copr_common.o \
+	samsung/ss_wrapper_common.o
+
+ifeq ($(CONFIG_SEC_KUNIT), y)
+ifeq ($(CONFIG_UML), y)
+
+# To report to Sherlock server, add GCOV_PROFILE_($target_file_name)
+GCOV_PROFILE_ss_dsi_panel_common.o := $(CONFIG_SEC_KUNIT)
+GCOV_PROFILE_ss_dsi_panel_debug.o := $(CONFIG_SEC_KUNIT)
+endif
+endif
+
+
+# LEGO
+subdir-ccflags-$(CONFIG_SEC_KUNIT) += \
+	-Wno-unused-variable \
+	-Wno-unused-function \
+	-Wno-format
+
+
+msm_drm-$(CONFIG_DISPLAY_SAMSUNG) += samsung/SELF_DISPLAY/self_display_6W3.o \
+	samsung/SELF_DISPLAY/self_display_FA7.o \
+	samsung/SELF_DISPLAY/self_display_FA9.o \
+	samsung/SELF_DISPLAY/self_display_FAB.o \
+	samsung/SELF_DISPLAY/self_display_HA8.o \
+	samsung/SELF_DISPLAY/self_display_HA9.o \
+	samsung/SELF_DISPLAY/self_display_HAB.o \
+	samsung/SELF_DISPLAY/self_display_HAC.o \
+	samsung/SELF_DISPLAY/self_display_HAD.o \
+	samsung/SELF_DISPLAY/self_display_UM1.o \
+	samsung/SELF_DISPLAY/self_display_XA0.o \
+	samsung/SELF_DISPLAY/self_display_XA1.o \
+	samsung/SELF_DISPLAY/self_display_XA2.o \
+	samsung/SELF_DISPLAY/self_display_FC1.o \
+	samsung/SELF_DISPLAY/self_display_SW83109.o \
+	samsung/SELF_DISPLAY/self_display_SW83109_A73.o \
+	samsung/SELF_DISPLAY/self_display_SW83109_WM6676Z21.o \
+	samsung/SELF_DISPLAY/self_display_HAB_AMB667AN01.o \
+	samsung/SELF_DISPLAY/self_display_HAB_AMB667AN01_A73.o \
+	samsung/SELF_DISPLAY/self_display_A73_S6E3FC3_AMB667BV01.o \
+	samsung/SELF_DISPLAY/self_display_FC3.o \
+	samsung/SELF_DISPLAY/self_display_FAC_AMF670BS01.o
+
+
+msm_drm-$(CONFIG_DISPLAY_SAMSUNG) += samsung/MAFPC/ss_dsi_mafpc_FAB.o \
+	samsung/MAFPC/ss_dsi_mafpc_HAB.o \
+	samsung/MAFPC/ss_dsi_mafpc_HAC.o \
+	samsung/MAFPC/ss_dsi_mafpc_HAD.o \
+	samsung/MAFPC/ss_dsi_mafpc_XA1.o \
+	samsung/MAFPC/ss_dsi_mafpc_XA2.o \
+	samsung/MAFPC/ss_dsi_mafpc_FAC_AMF670BS01.o

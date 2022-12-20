@@ -23,6 +23,15 @@ config ION_CMA_HEAP
 	  by the Contiguous Memory Allocator (CMA). If your system has these
 	  regions, you should say Y here.
 
+config ION_RBIN_HEAP
+	bool "ION RBIN Heap"
+	default y
+	depends on ION && RBIN && CLEANCACHE && ION_MSM_HEAPS=y
+	help
+	  Provides ION RBIN heap which utilizes RBIN memory.
+	  While RBIN heap is similar with CMA heap, it assumes that an ION buffer
+	  can be composed of multiple free chunks.
+
 config ION_MSM_HEAPS
 	tristate "MSM platform-based Ion heaps support"
 	depends on ION

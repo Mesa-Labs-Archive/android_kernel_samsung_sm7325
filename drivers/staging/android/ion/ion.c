@@ -481,6 +481,36 @@ static int ion_init_sysfs(void)
 	return 0;
 }
 
+void show_ion_heap_size(struct seq_file *s)
+{
+	struct ion_device *dev = internal_dev;
+	struct ion_heap *heap;
+
+	if (!down_read_trylock(&dev->lock))
+		return;
+
+	plist_for_each_entry(heap, &dev->heaps, node)
+	if (s) {
+		seq_printf(s, "ion%s: %8lu kB\n", heap->name,
+			heap->num_of_alloc_bytes >> 10);
+	} else {
+		pr_cont("ion%s:%lukB ", heap->name,
+			heap->num_of_alloc_bytes >> 10);
+	}
+	up_read(&dev->lock);
+}
+
+static int ion_heap_size_notifier(struct notifier_block *nb,
+				  unsigned long action, void *data)
+{
+	show_ion_heap_size((struct seq_file *)data);
+	return 0;
+}
+
+static struct notifier_block ion_heap_size_nb = {
+	.notifier_call = ion_heap_size_notifier,
+};
+
 static int ion_device_create(void)
 {
 	struct ion_device *idev;
@@ -510,6 +540,7 @@ static int ion_device_create(void)
 	init_rwsem(&idev->lock);
 	plist_head_init(&idev->heaps);
 	internal_dev = idev;
+	show_mem_extra_notifier_register(&ion_heap_size_nb);
 	return 0;
 
 err_sysfs:

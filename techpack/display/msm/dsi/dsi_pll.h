@@ -15,6 +15,10 @@
 #include "clk-regmap-divider.h"
 #include "clk-regmap-mux.h"
 #include "dsi_defs.h"
+/* redefine problem when include ss_dsi_panel_common.h in dsi_phy_hw_v4.0.c following dsi_hw.h */
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+#include "dsi_hw.h"
+#endif
 
 #define DSI_PLL_DBG(p, fmt, ...)	DRM_DEV_DEBUG(NULL, "[msm-dsi-debug]: DSI_PLL_%d: "\
 		fmt, p ? p->index : -1,	##__VA_ARGS__)
@@ -29,9 +33,12 @@
 				writel_relaxed((data), (base) + (offset))
 #define DSI_PLL_REG_R(base, offset)	readl_relaxed((base) + (offset))
 
+/* redefine problem when include ss_dsi_panel_common.h in dsi_phy_hw_v4.0.c following dsi_hw.h */
+#if !defined(CONFIG_DISPLAY_SAMSUNG)
 #define PLL_CALC_DATA(addr0, addr1, data0, data1)      \
 	(((data1) << 24) | ((((addr1) / 4) & 0xFF) << 16) | \
 	 ((data0) << 8) | (((addr0) / 4) & 0xFF))
+#endif
 
 #define DSI_DYN_PLL_REG_W(base, offset, addr0, addr1, data0, data1)   \
 		writel_relaxed(PLL_CALC_DATA(addr0, addr1, data0, data1), \

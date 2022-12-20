@@ -77,6 +77,7 @@ static void print_error_description(struct kasan_access_info *info)
 
 static DEFINE_SPINLOCK(report_lock);
 
+int kasan_panic = true;
 static void start_report(unsigned long *flags)
 {
 	/*
@@ -92,7 +93,7 @@ static void end_report(unsigned long *flags)
 	pr_err("==================================================================\n");
 	add_taint(TAINT_BAD_PAGE, LOCKDEP_NOW_UNRELIABLE);
 	spin_unlock_irqrestore(&report_lock, *flags);
-	if (panic_on_warn)
+	if (kasan_panic)
 		panic("panic_on_warn set ...\n");
 	kasan_enable_current();
 }

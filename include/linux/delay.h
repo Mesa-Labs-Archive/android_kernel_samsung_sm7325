@@ -39,10 +39,40 @@ extern unsigned long loops_per_jiffy;
 #define MAX_UDELAY_MS	5
 #endif
 
+#define MAX_MDELAY	1000
+
+#if defined(CONFIG_SEC_DEBUG_SUMMARY) && !defined(CONFIG_SAMSUNG_PRODUCT_SHIP)
+extern unsigned long sec_delay_check;
+
+#define BUG_MDELAY_LOG(irq, atomic)  if (unlikely(irq) || unlikely(atomic)) { \
+	if (irq) \
+	pr_err("BUG: mdelay called @ IRQ disabled context\n"); \
+	if (atomic) \
+	pr_err("BUG: mdelay called @ non-Atomic context\n"); \
+}
+#endif
+
 #ifndef mdelay
+#if !defined(CONFIG_SEC_DEBUG_SUMMARY) || defined(CONFIG_SAMSUNG_PRODUCT_SHIP)
 #define mdelay(n) (\
 	(__builtin_constant_p(n) && (n)<=MAX_UDELAY_MS) ? udelay((n)*1000) : \
 	({unsigned long __ms=(n); while (__ms--) udelay(1000);}))
+#else
+#define mdelay(n) ({ \
+	BUILD_BUG_ON(__builtin_constant_p(n) && (n) > MAX_MDELAY); \
+	if (__builtin_constant_p(n) && (n) <= MAX_UDELAY_MS) \
+		udelay((n) * 1000); \
+	else { \
+		unsigned long __ms = (n); \
+		bool irq_cond = irqs_disabled(); \
+		bool atomic_cond = !in_atomic(); \
+		BUG_MDELAY_LOG(irq_cond, atomic_cond); \
+		BUG_ON((irq_cond || atomic_cond) && sec_delay_check); \
+		while (__ms--) \
+		udelay(1000); \
+	} \
+})
+#endif
 #endif
 
 #ifndef ndelay

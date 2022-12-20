@@ -347,7 +347,7 @@ e_out:
 	return -1;
 }
 
-int conf_read_simple(const char *name, int def)
+int conf_read_simple(const char *name, int def, int sym_init)
 {
 	FILE *in = NULL;
 	char   *line = NULL;
@@ -392,6 +392,10 @@ load:
 	conf_warnings = 0;
 
 	def_flags = SYMBOL_DEF << def;
+
+	if (!sym_init)
+		goto readsym;
+
 	for_all_symbols(i, sym) {
 		sym->flags |= SYMBOL_CHANGED;
 		sym->flags &= ~(def_flags|SYMBOL_VALID);
@@ -409,7 +413,7 @@ load:
 			sym->def[def].tri = no;
 		}
 	}
-
+readsym:
 	while (compat_getline(&line, &line_asize, in) != -1) {
 		conf_lineno++;
 		sym = NULL;
@@ -518,7 +522,7 @@ int conf_read(const char *name)
 
 	sym_set_change_count(0);
 
-	if (conf_read_simple(name, S_DEF_USER)) {
+	if (conf_read_simple(name, S_DEF_USER, true)) {
 		sym_calc_value(modules_sym);
 		return 1;
 	}
@@ -995,7 +999,7 @@ static int conf_touch_deps(void)
 	depfile_prefix_len = strlen(depfile_path);
 
 	name = conf_get_autoconfig_name();
-	conf_read_simple(name, S_DEF_AUTO);
+	conf_read_simple(name, S_DEF_AUTO, true);
 	sym_calc_value(modules_sym);
 
 	for_all_symbols(i, sym) {

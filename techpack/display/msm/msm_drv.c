@@ -85,6 +85,28 @@
 
 static DEFINE_MUTEX(msm_release_lock);
 
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+static BLOCKING_NOTIFIER_HEAD(msm_drm_notifier_list);
+
+int msm_drm_register_notifier_client(struct notifier_block *nb)
+{
+	return blocking_notifier_chain_register(&msm_drm_notifier_list, nb);
+}
+EXPORT_SYMBOL(msm_drm_register_notifier_client);
+
+int msm_drm_unregister_notifier_client(struct notifier_block *nb)
+{
+	return blocking_notifier_chain_unregister(&msm_drm_notifier_list, nb);
+}
+EXPORT_SYMBOL(msm_drm_unregister_notifier_client);
+
+int __msm_drm_notifier_call_chain(unsigned long event, void *data)
+{
+	return blocking_notifier_call_chain(&msm_drm_notifier_list,
+					event, data);
+}
+#endif
+
 static void msm_fb_output_poll_changed(struct drm_device *dev)
 {
 	struct msm_drm_private *priv = NULL;
@@ -616,10 +638,19 @@ static int msm_drm_display_thread_create(struct sched_param param,
 		priv->disp_thread[i].crtc_id = priv->crtcs[i]->base.id;
 		kthread_init_worker(&priv->disp_thread[i].worker);
 		priv->disp_thread[i].dev = ddev;
+#if IS_ENABLED(CONFIG_QGKI)
 		priv->disp_thread[i].thread =
 			kthread_run(kthread_worker_fn,
 				&priv->disp_thread[i].worker,
 				"crtc_commit:%d", priv->disp_thread[i].crtc_id);
+#else
+		priv->disp_thread[i].thread =
+			kthread_create(kthread_worker_fn,
+				&priv->disp_thread[i].worker,
+				"crtc_commit:%d", priv->disp_thread[i].crtc_id);
+		kthread_bind(priv->disp_thread[i].thread, 1);
+		wake_up_process(priv->disp_thread[i].thread);
+#endif
 		ret = sched_setscheduler(priv->disp_thread[i].thread,
 							SCHED_FIFO, &param);
 		if (ret)
@@ -635,10 +666,19 @@ static int msm_drm_display_thread_create(struct sched_param param,
 		priv->event_thread[i].crtc_id = priv->crtcs[i]->base.id;
 		kthread_init_worker(&priv->event_thread[i].worker);
 		priv->event_thread[i].dev = ddev;
+#if IS_ENABLED(CONFIG_QGKI)		
 		priv->event_thread[i].thread =
 			kthread_run(kthread_worker_fn,
 				&priv->event_thread[i].worker,
 				"crtc_event:%d", priv->event_thread[i].crtc_id);
+#else
+		priv->event_thread[i].thread =
+			kthread_create(kthread_worker_fn,
+				&priv->event_thread[i].worker,
+				"crtc_event:%d", priv->event_thread[i].crtc_id);
+		kthread_bind(priv->event_thread[i].thread, 2);
+		wake_up_process(priv->event_thread[i].thread);
+#endif	
 		/**
 		 * event thread should also run at same priority as disp_thread
 		 * because it is handling frame_done events. A lower priority
@@ -958,6 +998,11 @@ mdss_init_fail:
  * DRM operations:
  */
 
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+struct msm_file_private *msm_ioctl_power_ctrl_ctx;
+DEFINE_MUTEX(msm_ioctl_power_ctrl_ctx_lock);
+#endif
+
 static int context_init(struct drm_device *dev, struct drm_file *file)
 {
 	struct msm_file_private *ctx;
@@ -989,6 +1034,13 @@ static int msm_open(struct drm_device *dev, struct drm_file *file)
 
 static void context_close(struct msm_file_private *ctx)
 {
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+	mutex_lock(&msm_ioctl_power_ctrl_ctx_lock);
+	if (msm_ioctl_power_ctrl_ctx == ctx)
+		msm_ioctl_power_ctrl_ctx = NULL;
+	mutex_unlock(&msm_ioctl_power_ctrl_ctx_lock);
+#endif
+
 	kfree(ctx);
 }
 
@@ -1626,6 +1678,12 @@ int msm_ioctl_power_ctrl(struct drm_device *dev, void *data,
 
 	priv = dev->dev_private;
 
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+	mutex_lock(&msm_ioctl_power_ctrl_ctx_lock);
+	msm_ioctl_power_ctrl_ctx = ctx;
+	mutex_unlock(&msm_ioctl_power_ctrl_ctx_lock);
+#endif
+
 	mutex_lock(&ctx->power_lock);
 
 	old_cnt = ctx->enable_refcnt;
@@ -1658,6 +1716,11 @@ int msm_ioctl_power_ctrl(struct drm_device *dev, void *data,
 			vote_req);
 	SDE_EVT32(current->pid, power_ctrl->enable, ctx->enable_refcnt,
 			vote_req);
+
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+	pr_info("%s enable %d, refcnt %d, vote_req %d\n", __func__,
+			power_ctrl->enable, ctx->enable_refcnt, vote_req);
+#endif
 	mutex_unlock(&ctx->power_lock);
 	return rc;
 }
@@ -1975,6 +2038,12 @@ static int add_display_components(struct device *dev,
 			node = of_parse_phandle(np, "connectors", i);
 			if (!node)
 				break;
+#ifndef CONFIG_SEC_DISPLAYPORT
+			if (!strncmp(node->name, "qcom,dp_display", 15)) {
+				pr_info("[drm-dp] disabled displayport!\n");
+				continue;
+			}
+#endif
 
 			component_match_add(dev, matchptr, compare_of, node);
 		}
@@ -2263,6 +2332,11 @@ static void __exit msm_drm_unregister(void)
 module_init(msm_drm_register);
 module_exit(msm_drm_unregister);
 
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+#if defined(CONFIG_REGULATOR_S2DOS05)
+MODULE_SOFTDEP("pre: s2dos05_regulator");
+#endif
+#endif
 MODULE_AUTHOR("Rob Clark <robdclark@gmail.com");
 MODULE_DESCRIPTION("MSM DRM Driver");
 MODULE_LICENSE("GPL");

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  */
 
 #ifndef _DSI_CTRL_HW_H_
@@ -896,8 +896,6 @@ struct dsi_ctrl_hw_ops {
  * @supported_errors:       Number of supported errors.
  * @phy_isolation_enabled:    A boolean property allows to isolate the phy from
  *                          dsi controller and run only dsi controller.
- * @null_insertion_enabled:  A boolean property to allow dsi controller to
- *                           insert null packet.
  * @widebus_support:        48 bit wide data bus is supported.
  * @reset_trig_ctrl:		Boolean to indicate if trigger control needs to
  *				be reset to default.
@@ -921,7 +919,6 @@ struct dsi_ctrl_hw {
 	u64 supported_errors;
 
 	bool phy_isolation_enabled;
-	bool null_insertion_enabled;
 	bool widebus_support;
 	bool reset_trig_ctrl;
 };

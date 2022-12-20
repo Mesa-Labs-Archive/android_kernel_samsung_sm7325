@@ -10,6 +10,10 @@
 #include "sde_formats.h"
 #include "sde_trace.h"
 
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+#include "ss_dsi_panel_common.h"
+#endif
+
 #define SDE_DEBUG_CMDENC(e, fmt, ...) SDE_DEBUG("enc%d intf%d " fmt, \
 		(e) && (e)->base.parent ? \
 		(e)->base.parent->base.id : -1, \
@@ -243,6 +247,35 @@ static void sde_encoder_phys_cmd_te_rd_ptr_irq(void *arg, int irq_idx)
 	unsigned long lock_flags;
 	struct drm_display_mode *mode;
 
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+	struct drm_connector *conn = phys_enc ? phys_enc->connector : NULL;
+	struct sde_connector *sde_conn;
+	struct dsi_display *disp;
+	struct samsung_display_driver_data *vdd = NULL;
+	enum ss_display_ndx ndx = COMMON_DISPLAY_NDX;
+
+	static ktime_t prev_t[MAX_DISPLAY_NDX];
+	ktime_t cur_t;
+	int t_delt;
+	int fps;
+	static int prev_fps[MAX_DISPLAY_NDX];
+	static int cnt[MAX_DISPLAY_NDX];
+
+	if (conn) {
+		sde_conn = to_sde_connector(conn);
+		if (sde_conn) {
+			disp = sde_conn->display;
+			if (disp) {
+				vdd = disp->panel->panel_private;
+				ndx = vdd->ndx;
+			}
+		}
+	} else {
+		SDE_ERROR("error: invalid drm_conn \n");
+		ndx = -1;
+	}
+#endif
+
 	if (!phys_enc || !phys_enc->hw_pp || !phys_enc->hw_intf)
 		return;
 
@@ -276,10 +309,51 @@ static void sde_encoder_phys_cmd_te_rd_ptr_irq(void *arg, int irq_idx)
 			!info[0].wr_ptr_line_count)
 		atomic_add_unless(&cmd_enc->frame_trigger_count, -1, 0);
 
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+	/* case 05295952: detect MDP clock underflow that causes line noise */
+	if (vdd && info[0].wr_ptr_line_count > (phys_enc->cached_mode.vdisplay/3) &&
+			info[0].wr_ptr_line_count < phys_enc->cached_mode.vdisplay) {
+		SS_XLOG(info[0].wr_ptr_line_count, ++vdd->cnt_mdp_clk_underflow);
+		SDE_ERROR("mdp clock underrun: wr: %d, cnt: %d\n",
+				info[0].wr_ptr_line_count, vdd->cnt_mdp_clk_underflow);
+	}
+
+	if (vdd && vdd->vrr.support_te_mod && vdd->vrr.te_mod_on && vdd->vrr.te_mod_divider > 0) {
+		vdd->vrr.te_mod_cnt = (vdd->vrr.te_mod_cnt + 1) % vdd->vrr.te_mod_divider;
+
+		if (vdd->vrr.te_mod_cnt)
+			goto skip_call_handle_vblank_virt;
+	}
+#endif
+
 	if (phys_enc->parent_ops.handle_vblank_virt)
 		phys_enc->parent_ops.handle_vblank_virt(phys_enc->parent,
 			phys_enc);
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+skip_call_handle_vblank_virt:
+	if (ndx >= 0 && vdd && ndx < MAX_DISPLAY_NDX) {
+		if(ctl)
+			SDE_DEBUG("sde_encoder_phys_cmd_te_rd_ptr_irq = [DISPLAY_%d]\n", ctl->idx);
+		cur_t = ktime_get();
 
+		if (vdd->vrr.running_vrr || cnt[ndx]-- > 0) {
+			t_delt = (int)ktime_us_delta(cur_t , prev_t[ndx]);
+			fps = 1000000 / t_delt;
+
+			if (cnt[ndx] == 1) {
+				LCD_INFO(vdd, "VRR: teirq: %d, %d\n", prev_fps[ndx], fps);
+				SS_XLOG(prev_fps[ndx], fps);
+			}
+
+			if (vdd->vrr.running_vrr)
+				cnt[ndx] = 5;
+			prev_fps[ndx] = fps;
+		}
+
+		prev_t[ndx] = cur_t;
+
+	}
+#endif
 	atomic_add_unless(&cmd_enc->pending_vblank_cnt, -1, 0);
 	wake_up_all(&cmd_enc->pending_vblank_wq);
 	SDE_ATRACE_END("rd_ptr_irq");
@@ -518,6 +592,12 @@ static int _sde_encoder_phys_cmd_handle_ppdone_timeout(
 	u32 pending_kickoff_cnt;
 	unsigned long lock_flags;
 
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+	struct sde_connector *sde_conn;
+	struct dsi_display *disp;
+	struct samsung_display_driver_data *vdd;
+#endif
+
 	if (!phys_enc->hw_pp || !phys_enc->hw_ctl)
 		return -EINVAL;
 
@@ -534,6 +614,42 @@ static int _sde_encoder_phys_cmd_handle_ppdone_timeout(
 			cmd_enc->pp_timeout_report_cnt,
 			pending_kickoff_cnt,
 			frame_event);
+
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+	SS_XLOG(cmd_enc->pp_timeout_report_cnt);
+
+	if (conn) {
+		sde_conn = to_sde_connector(conn);
+		if (sde_conn) {
+			disp = sde_conn->display;
+			if (disp) {
+				vdd = disp->panel->panel_private;
+				if (vdd)
+					ss_check_te(vdd);
+			}
+		}
+	}
+
+	inc_dpui_u32_field(DPUI_KEY_QCT_PPTO, 1);
+#if 0
+	pr_err("%s (%d): pp_timeout_report_cnt: %d\n", __func__, __LINE__, cmd_enc->pp_timeout_report_cnt);
+	if (cmd_enc->pp_timeout_report_cnt < 10) {
+		/* request a ctl reset before the next kickoff */
+		phys_enc->enable_state = SDE_ENC_ERR_NEEDS_HW_RESET;
+		pr_err("%s (%d): ignore pp & phy_hw_reset\n", __func__, __LINE__);
+		goto exit;
+	}
+#endif
+
+	SDE_ERROR_CMDENC(cmd_enc,
+		"pp:%d kickoff timed out ctl %d koff_cnt %d\n",
+		phys_enc->hw_pp->idx - PINGPONG_0,
+		phys_enc->hw_ctl->idx - CTL_0,
+		pending_kickoff_cnt);
+
+	SDE_EVT32(DRMID(phys_enc->parent), SDE_EVTLOG_FATAL);
+	SDE_DBG_DUMP("all", "dbg_bus", "vbif_dbg_bus", "panic");
+#endif
 
 	/* check if panel is still sending TE signal or not */
 	if (sde_connector_esd_status(phys_enc->connector))
@@ -864,6 +980,10 @@ static int sde_encoder_phys_cmd_control_vblank_irq(
 	SDE_EVT32(DRMID(phys_enc->parent), phys_enc->hw_pp->idx - PINGPONG_0,
 			enable, refcount);
 
+#if defined(CONFIG_DISPLAY_SAMSUNG) // case 04436106
+	SS_XLOG_VSYNC(enable, refcount);
+#endif
+
 	if (enable && atomic_inc_return(&phys_enc->vblank_refcount) == 1) {
 		ret = sde_encoder_helper_register_irq(phys_enc, INTR_IDX_RDPTR);
 		if (ret)
@@ -890,6 +1010,9 @@ end:
 		SDE_EVT32(DRMID(phys_enc->parent),
 				phys_enc->hw_pp->idx - PINGPONG_0,
 				enable, refcount, SDE_EVTLOG_ERROR);
+#if defined(CONFIG_DISPLAY_SAMSUNG) // case 04436106
+		SS_XLOG_VSYNC(0xbad, enable, refcount, ret);
+#endif
 	}
 
 	return ret;
@@ -1080,7 +1203,14 @@ static void sde_encoder_phys_cmd_tearcheck_config(
 	 * disable sde hw generated TE signal, since hw TE will arrive first.
 	 * Only caveat is if due to error, we hit wrap-around.
 	 */
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+	/* 3 * 16.6ms based on mode->vtotal
+	 note : need to multiply current_fps / 60 to match 16ms regardless of current fps
+	*/
+	tc_cfg.sync_cfg_height = (mode->vtotal * 3 * mode->vrefresh) / 12 / 5;
+#else
 	tc_cfg.sync_cfg_height = 0xFFF0;
+#endif
 	tc_cfg.vsync_init_val = mode->vdisplay;
 	tc_cfg.sync_threshold_start = _get_tearcheck_threshold(phys_enc);
 	tc_cfg.sync_threshold_continue = DEFAULT_TEARCHECK_SYNC_THRESH_CONTINUE;
@@ -1811,6 +1941,11 @@ static void _sde_encoder_autorefresh_disable_seq1(
 		udelay(AUTOREFRESH_SEQ1_POLL_TIME);
 		if ((trial * AUTOREFRESH_SEQ1_POLL_TIME)
 				> (KICKOFF_TIMEOUT_MS * USEC_PER_MSEC)) {
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+			struct samsung_display_driver_data *vdd = ss_get_vdd(PRIMARY_DISPLAY_NDX);
+			vdd->is_autorefresh_fail = true;
+			LCD_INFO(vdd, "set is_autorefresh_fail true\n");
+#endif
 			SDE_ERROR_CMDENC(cmd_enc,
 					"disable autorefresh failed\n");
 

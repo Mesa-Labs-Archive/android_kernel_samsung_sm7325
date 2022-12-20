@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2017-2020, The Linux Foundation. All rights reserved.
  */
 
 #include "cam_sensor_dev.h"
@@ -50,7 +50,7 @@ static long cam_sensor_subdev_ioctl(struct v4l2_subdev *sd,
 	switch (cmd) {
 	case VIDIOC_CAM_CONTROL:
 		rc = cam_sensor_driver_cmd(s_ctrl, arg);
-		if (rc)
+		if (rc < 0)
 			CAM_ERR(CAM_SENSOR,
 				"Failed in Driver cmd: %d", rc);
 		break;
@@ -147,7 +147,7 @@ static int cam_sensor_init_subdev_params(struct cam_sensor_ctrl_t *s_ctrl)
 		CAM_SD_CLOSE_MEDIUM_PRIORITY;
 
 	rc = cam_register_subdev(&(s_ctrl->v4l2_dev_str));
-	if (rc)
+	if ((rc < 0) && (rc != -EPROBE_DEFER))
 		CAM_ERR(CAM_SENSOR, "Fail with cam_register_subdev rc: %d", rc);
 
 	return rc;
@@ -232,6 +232,11 @@ static int32_t cam_sensor_driver_i2c_probe(struct i2c_client *client,
 	s_ctrl->bridge_intf.ops.flush_req = cam_sensor_flush_request;
 
 	s_ctrl->sensordata->power_info.dev = soc_info->dev;
+
+#if defined(CONFIG_CAMERA_FRAME_CNT_DBG)
+	s_ctrl->is_thread_started = false;
+	s_ctrl->sensor_thread = NULL;
+#endif
 
 	return rc;
 free_perframe:
@@ -325,6 +330,11 @@ static int cam_sensor_component_bind(struct device *dev,
 	platform_set_drvdata(pdev, s_ctrl);
 	s_ctrl->sensor_state = CAM_SENSOR_INIT;
 	CAM_DBG(CAM_SENSOR, "Component bound successfully");
+
+#if defined(CONFIG_CAMERA_FRAME_CNT_DBG)
+	s_ctrl->is_thread_started = false;
+	s_ctrl->sensor_thread = NULL;
+#endif
 
 	return rc;
 
@@ -448,6 +458,9 @@ static struct i2c_driver cam_sensor_driver_i2c = {
 	.remove = cam_sensor_driver_i2c_remove,
 	.driver = {
 		.name = SENSOR_DRIVER_I2C,
+		.owner = THIS_MODULE,
+		.of_match_table = cam_sensor_driver_dt_match,
+		.suppress_bind_attrs = true,
 	},
 };
 

@@ -73,6 +73,8 @@ struct tx_macro_swr_ctrl_data {
 	struct platform_device *tx_swr_pdev;
 };
 
+int hpf_value[8] = {0};
+
 struct tx_macro_swr_ctrl_platform_data {
 	void *handle; /* holds codec private data */
 	int (*read)(void *handle, int reg);
@@ -133,6 +135,19 @@ struct tx_macro_reg_mask_val {
 	u8 val;
 };
 
+/* Based on 9.6MHZ MCLK Freq */
+enum {
+	CLK_DISABLED = 0,
+	CLK_2P4MHZ,
+	CLK_0P6MHZ,
+};
+
+static int dmic_clk_rate_div[] = {
+	[CLK_DISABLED] = 0,
+	[CLK_2P4MHZ] = TX_MACRO_CLK_DIV_4,
+	[CLK_0P6MHZ] = TX_MACRO_CLK_DIV_16,
+};
+
 struct tx_mute_work {
 	struct tx_macro_priv *tx_priv;
 	u32 decimator;
@@ -185,7 +200,14 @@ struct tx_macro_priv {
 	bool register_event_listener;
 	u16 current_clk_id;
 	int disable_afe_wakeup_event_listener;
+	u32 dmic_rate_override;
 };
+
+static const char * const dmic_rate_override_text[] = {
+	"DISABLED", "CLK_2P4MHZ", "CLK_0P6MHZ"
+};
+
+static SOC_ENUM_SINGLE_EXT_DECL(dmic_rate_enum, dmic_rate_override_text);
 
 static bool tx_macro_get_data(struct snd_soc_component *component,
 			      struct device **tx_dev,
@@ -213,6 +235,42 @@ static bool tx_macro_get_data(struct snd_soc_component *component,
 	}
 
 	return true;
+}
+
+static int dmic_rate_override_get(struct snd_kcontrol *kcontrol,
+				  struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_component *component =
+			snd_soc_kcontrol_component(kcontrol);
+	struct tx_macro_priv *tx_priv = NULL;
+	struct device *tx_dev = NULL;
+
+	if (!tx_macro_get_data(component, &tx_dev, &tx_priv, __func__))
+		return -EINVAL;
+
+	ucontrol->value.enumerated.item[0] = tx_priv->dmic_rate_override;
+	dev_dbg(component->dev, "%s: dmic rate: %d\n",
+		__func__, tx_priv->dmic_rate_override);
+
+	return 0;
+}
+
+static int dmic_rate_override_put(struct snd_kcontrol *kcontrol,
+				  struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_component *component =
+			snd_soc_kcontrol_component(kcontrol);
+	struct tx_macro_priv *tx_priv = NULL;
+	struct device *tx_dev = NULL;
+
+	if (!tx_macro_get_data(component, &tx_dev, &tx_priv, __func__))
+		return -EINVAL;
+
+	tx_priv->dmic_rate_override = ucontrol->value.enumerated.item[0];
+	dev_dbg(component->dev, "%s: dmic rate: %d\n",
+		__func__, tx_priv->dmic_rate_override);
+
+	return 0;
 }
 
 static int tx_macro_mclk_enable(struct tx_macro_priv *tx_priv,
@@ -1266,6 +1324,110 @@ static SOC_ENUM_SINGLE_DECL(cf_dec6_enum, BOLERO_CDC_TX6_TX_PATH_CFG0, 5,
 							cf_text);
 static SOC_ENUM_SINGLE_DECL(cf_dec7_enum, BOLERO_CDC_TX7_TX_PATH_CFG0, 5,
 							cf_text);
+
+static const struct soc_enum tx_hpf_mux_enum =
+							SOC_ENUM_SINGLE_EXT(ARRAY_SIZE(cf_text), cf_text);
+
+static int tx_macro_hpf_mode_put(struct snd_kcontrol *kcontrol,
+		struct snd_ctl_elem_value *ucontrol)
+{
+
+	unsigned int tx = 0;
+	int ret = 0;
+	char *wname = NULL;
+	u16 tx_vol_ctl_reg = 0;
+	u16 dec_cfg_reg = 0;
+	u16 hpf_gate_reg = 0;
+	struct snd_soc_component *component =
+		snd_soc_kcontrol_component(kcontrol);
+	struct tx_macro_priv *tx_priv = NULL;
+	struct device *tx_dev = NULL;
+	int value = ucontrol->value.integer.value[0];
+
+	if (!tx_macro_get_data(component, &tx_dev, &tx_priv, __func__))
+		return -EINVAL;
+
+	wname = strpbrk(kcontrol->id.name, "01234567");
+	if (!wname) {
+		dev_err(component->dev, "%s: not found\n", __func__);
+		return -EINVAL;
+	}
+
+	ret = kstrtouint(wname, 10, &tx);
+	if (ret < 0) {
+		dev_err(component->dev, "%s: Invalid tx hpf\n", __func__);
+		return -EINVAL;
+	}
+
+	hpf_value[tx] = value;
+	tx_vol_ctl_reg = BOLERO_CDC_TX0_TX_PATH_CTL +
+			TX_MACRO_TX_PATH_OFFSET * tx;
+	hpf_gate_reg = BOLERO_CDC_TX0_TX_PATH_SEC2 +
+			TX_MACRO_TX_PATH_OFFSET * tx;
+	dec_cfg_reg = BOLERO_CDC_TX0_TX_PATH_CFG0 +
+			TX_MACRO_TX_PATH_OFFSET * tx;
+
+	snd_soc_component_update_bits(component, tx_vol_ctl_reg, 0x20, 0x20);
+
+	switch (value) {
+	case CF_MIN_3DB_150HZ:
+		snd_soc_component_update_bits(component, dec_cfg_reg,
+				TX_HPF_CUT_OFF_FREQ_MASK,
+				CF_MIN_3DB_150HZ << 5);
+		break;
+	case CF_MIN_3DB_75HZ:
+		snd_soc_component_update_bits(component, dec_cfg_reg,
+				TX_HPF_CUT_OFF_FREQ_MASK,
+				CF_MIN_3DB_75HZ << 5);
+		break;
+	case CF_MIN_3DB_4HZ:
+		snd_soc_component_update_bits(component, dec_cfg_reg,
+				TX_HPF_CUT_OFF_FREQ_MASK,
+				CF_MIN_3DB_4HZ << 5);
+		break;
+	default:
+		dev_err(component->dev, "%s: Invalid value\n", __func__);
+		return 0;
+	}
+
+	snd_soc_component_update_bits(component, hpf_gate_reg, 0x03, 0x02);
+	usleep_range(3000, 3010);
+	snd_soc_component_update_bits(component, hpf_gate_reg, 0x03, 0x01);
+
+	snd_soc_component_update_bits(component, tx_vol_ctl_reg, 0x20, 0x00);
+
+	return 0;
+}
+
+static int tx_macro_hpf_mode_get(struct snd_kcontrol *kcontrol,
+		struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_component *component =
+		snd_soc_kcontrol_component(kcontrol);
+	struct tx_macro_priv *tx_priv = NULL;
+	struct device *tx_dev = NULL;
+	unsigned int tx = 0;
+	int ret = 0;
+	char *wname = NULL;
+
+	if (!tx_macro_get_data(component, &tx_dev, &tx_priv, __func__))
+		return -EINVAL;
+
+	wname = strpbrk(kcontrol->id.name, "01234567");
+	if (!wname) {
+		dev_err(component->dev, "%s: not found\n", __func__);
+		return -EINVAL;
+	}
+
+	ret = kstrtouint(wname, 10, &tx);
+	if (ret < 0) {
+		dev_err(component->dev, "%s: Invalid tx hpf\n", __func__);
+		return -EINVAL;
+	}
+	ucontrol->value.integer.value[0] = hpf_value[tx];
+
+	return 0;
+}
 
 static int tx_macro_hw_params(struct snd_pcm_substream *substream,
 			   struct snd_pcm_hw_params *params,
@@ -2480,6 +2642,30 @@ static const struct snd_kcontrol_new tx_macro_snd_controls_common[] = {
 	SOC_ENUM_EXT("DEC3 MODE", dec_mode_mux_enum,
 			tx_macro_dec_mode_get, tx_macro_dec_mode_put),
 
+	SOC_ENUM_EXT("HPF cut off TX0", tx_hpf_mux_enum,
+			tx_macro_hpf_mode_get, tx_macro_hpf_mode_put),
+
+	SOC_ENUM_EXT("HPF cut off TX1", tx_hpf_mux_enum,
+			tx_macro_hpf_mode_get, tx_macro_hpf_mode_put),
+
+	SOC_ENUM_EXT("HPF cut off TX2", tx_hpf_mux_enum,
+			tx_macro_hpf_mode_get, tx_macro_hpf_mode_put),
+
+	SOC_ENUM_EXT("HPF cut off TX3", tx_hpf_mux_enum,
+			tx_macro_hpf_mode_get, tx_macro_hpf_mode_put),
+
+	SOC_ENUM_EXT("HPF cut off TX4", tx_hpf_mux_enum,
+			tx_macro_hpf_mode_get, tx_macro_hpf_mode_put),
+
+	SOC_ENUM_EXT("HPF cut off TX5", tx_hpf_mux_enum,
+			tx_macro_hpf_mode_get, tx_macro_hpf_mode_put),
+
+	SOC_ENUM_EXT("HPF cut off TX6", tx_hpf_mux_enum,
+			tx_macro_hpf_mode_get, tx_macro_hpf_mode_put),
+
+	SOC_ENUM_EXT("HPF cut off TX7", tx_hpf_mux_enum,
+			tx_macro_hpf_mode_get, tx_macro_hpf_mode_put),
+
 	SOC_SINGLE_EXT("DEC0_BCS Switch", SND_SOC_NOPM, 0, 1, 0,
 		       tx_macro_get_bcs, tx_macro_set_bcs),
 
@@ -2488,6 +2674,9 @@ static const struct snd_kcontrol_new tx_macro_snd_controls_common[] = {
 
 	SOC_ENUM_EXT("BCS CH_SEL", bcs_ch_sel_mux_enum,
 			tx_macro_get_bcs_ch_sel, tx_macro_put_bcs_ch_sel),
+
+	SOC_ENUM_EXT("DMIC_RATE OVERRIDE", dmic_rate_enum,
+			dmic_rate_override_get, dmic_rate_override_put),
 };
 
 static const struct snd_kcontrol_new tx_macro_snd_controls_v3[] = {
@@ -2584,6 +2773,9 @@ static const struct snd_kcontrol_new tx_macro_snd_controls[] = {
 
 	SOC_SINGLE_EXT("DEC0_BCS Switch", SND_SOC_NOPM, 0, 1, 0,
 		       tx_macro_get_bcs, tx_macro_set_bcs),
+
+	SOC_ENUM_EXT("DMIC_RATE OVERRIDE", dmic_rate_enum,
+			dmic_rate_override_get, dmic_rate_override_put),
 };
 
 static int tx_macro_register_event_listener(struct snd_soc_component *component,
@@ -2817,6 +3009,9 @@ static int tx_macro_clk_div_get(struct snd_soc_component *component)
 
 	if (!tx_macro_get_data(component, &tx_dev, &tx_priv, __func__))
 		return -EINVAL;
+
+	if (tx_priv->dmic_rate_override)
+		return dmic_clk_rate_div[tx_priv->dmic_rate_override];
 
 	return tx_priv->dmic_clk_div;
 }

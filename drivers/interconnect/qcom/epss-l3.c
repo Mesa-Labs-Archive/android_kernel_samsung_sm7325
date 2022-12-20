@@ -15,6 +15,12 @@
 #include <linux/of_platform.h>
 #include <linux/platform_device.h>
 
+
+#if IS_ENABLED(CONFIG_SEC_DEBUG_APPS_CLK_LOGGING)
+#include <linux/sec_debug.h>
+#include <linux/sec_smem.h>
+#endif
+
 #define LUT_MAX_ENTRIES			40U
 #define LUT_SRC				GENMASK(30, 30)
 #define LUT_L_VAL			GENMASK(7, 0)
@@ -175,7 +181,9 @@ static int qcom_icc_l3_cpu_set(struct icc_node *src, struct icc_node *dst)
 		if (qp->lut_freqs[index] >= rate)
 			break;
 	}
-
+#if IS_ENABLED(CONFIG_SEC_DEBUG_APPS_CLK_LOGGING)
+	sec_smem_clk_osm_add_log_l3(qp->lut_freqs[index] / 1000);
+#endif
 	writel_relaxed(index, EPSS_L3_VOTE_REG(qp->base, qn->domain, qn->cpu));
 	return 0;
 }

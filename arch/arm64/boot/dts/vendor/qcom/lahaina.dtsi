@@ -565,6 +565,7 @@
 		reusable;
 		alignment = <0x0 0x400000>;
 		size = <0x0 0x6400000>;
+		status = "disabled";
 	};
 };
 

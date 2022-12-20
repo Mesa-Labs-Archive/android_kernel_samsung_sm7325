@@ -5282,7 +5282,7 @@ handle_fatal_error:
 			CSID_PATH_INFO_INPUT_SOF) &&
 			(csid_hw->csid_debug & CSID_DEBUG_ENABLE_SOF_IRQ)) {
 			if (!csid_hw->sof_irq_triggered)
-				CAM_INFO_RATE_LIMIT(CAM_ISP,
+				CAM_INFO(CAM_ISP,
 				"CSID:%d IPP SOF received",
 					csid_hw->hw_intf->hw_idx);
 			else
@@ -5447,7 +5447,7 @@ handle_fatal_error:
 		if ((irq_status[i] & CSID_PATH_INFO_INPUT_SOF) &&
 			(csid_hw->csid_debug & CSID_DEBUG_ENABLE_SOF_IRQ)) {
 			if (!csid_hw->sof_irq_triggered)
-				CAM_INFO_RATE_LIMIT(CAM_ISP,
+				CAM_INFO(CAM_ISP,
 				"CSID:%d RDI:%d SOF received",
 					csid_hw->hw_intf->hw_idx, i);
 			else

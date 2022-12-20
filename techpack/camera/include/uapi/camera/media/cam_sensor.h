@@ -137,6 +137,12 @@ struct cam_cmd_ois_info {
 	__u8                  cmd_type;
 	__u8                  ois_fw_flag;
 	__u8                  is_ois_calib;
+#if 1
+	__u32                 gyro_raw_x;
+	__u32                 gyro_raw_y;
+	__u32                 gyro_raw_z;
+	__u32                 efs_cal;
+#endif
 	char                  ois_name[MAX_OIS_NAME_SIZE];
 	struct cam_ois_opcode opcode;
 } __attribute__((packed));
@@ -162,6 +168,7 @@ struct cam_cmd_probe {
 	__u8     cmd_type;
 	__u32    reg_addr;
 	__u32    expected_data;
+	__u32    version_id;
 	__u32    data_mask;
 	__u16    camera_id;
 	__u16    reserved;
@@ -341,6 +348,7 @@ struct cam_csiphy_info {
 	__u8     secure_mode;
 	__u64    settle_time;
 	__u64    data_rate;
+	__u16    shooting_mode;
 } __attribute__((packed));
 
 /**
@@ -375,6 +383,17 @@ struct cam_sensor_acquire_dev {
 	__u32    handle_type;
 	__u32    reserved;
 	__u64    info_handle;
+} __attribute__((packed));
+
+/**
+ * cam_sensor_release_dev : Updates sensor acuire cmd
+ * @session_handle :    Session handle for acquiring device
+ * @device_handle  :    Updates device handle
+ *
+ */
+struct cam_sensor_release_dev {
+	__u32    session_handle;
+	__u32    device_handle;
 } __attribute__((packed));
 
 /**

@@ -465,6 +465,11 @@ struct icnss_priv {
 	struct icnss_dms_data dms;
 	u8 use_nv_mac;
 	u32 wlan_en_delay_ms;
+	
+#ifdef CONFIG_SEC_SS_CNSS_FEATURE_SYSFS
+	struct kobject *wifi_kobj;
+    struct completion macloader_done;
+#endif /* CONFIG_SEC_SS_CNSS_FEATURE_SYSFS */
 };
 
 struct icnss_reg_info {
