@@ -5082,13 +5082,11 @@ CONFIG_SPS=y
 # CONFIG_SPS_SUPPORT_BAMDMA is not set
 CONFIG_SPS_SUPPORT_NDP_BAM=y
 # CONFIG_EP_PCIE is not set
-CONFIG_IPA3=y
-CONFIG_IPA_WDI_UNIFIED_API=y
+# CONFIG_IPA3 is not set
 CONFIG_USB_BAM=y
 CONFIG_MSM_GENI_SE=y
 # CONFIG_QPNP_REVID is not set
 # CONFIG_MSM_11AD is not set
-# CONFIG_IOSS is not set
 # CONFIG_R8125 is not set
 # CONFIG_R8168 is not set
 # end of Qualcomm technologies inc. MSM specific device drivers
