@@ -2070,6 +2070,9 @@ static struct ipa3_rx_pkt_wrapper *ipa3_alloc_rx_pkt_page(
 	struct ipa3_rx_pkt_wrapper *rx_pkt;
 
 	flag |= __GFP_NOMEMALLOC;
+	if (is_tmp_alloc)
+		flag |= (__GFP_NORETRY | __GFP_NOWARN);
+
 	rx_pkt = kmem_cache_zalloc(ipa3_ctx->rx_pkt_wrapper_cache,
 		flag);
 	if (unlikely(!rx_pkt))

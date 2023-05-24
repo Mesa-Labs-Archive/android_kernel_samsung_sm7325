@@ -60,6 +60,11 @@ struct stats_entry {
 	struct appended_entry appended_entry;
 };
 
+#if IS_ENABLED(CONFIG_SEC_PM)
+struct soc_sleep_stats_data *debug_drv;
+u64 last_accumulated[5];
+#endif
+
 static inline u64 get_time_in_sec(u64 counter)
 {
 	do_div(counter, arch_timer_get_rate());
@@ -144,6 +149,68 @@ exit:
 	return length;
 }
 
+#if IS_ENABLED(CONFIG_SEC_PM)
+void debug_soc_stats_show(char *annotation)
+{
+	int i;
+	uint32_t offset;
+	struct stats_entry data;
+	struct entry *e = &data.entry;
+	void __iomem *reg = debug_drv->reg;
+	char stat_type[5] = {0};
+	char buf[256];
+	char *buf_ptr = buf;
+	u64 time_in_last_mode;
+	u64 time_since_last_mode;
+
+	buf_ptr += sprintf(buf_ptr, "PM: %s: ", annotation);
+	for (i = 0; i < debug_drv->config->num_records; i++) {
+		offset = offsetof(struct entry, stat_type);
+		e->stat_type = le32_to_cpu(readl_relaxed(reg + offset));
+
+		offset = offsetof(struct entry, count);
+		e->count = le32_to_cpu(readl_relaxed(reg + offset));
+
+		offset = offsetof(struct entry, last_entered_at);
+		e->last_entered_at = le64_to_cpu(readq_relaxed(reg + offset));
+
+		offset = offsetof(struct entry, last_exited_at);
+		e->last_exited_at = le64_to_cpu(readq_relaxed(reg + offset));
+
+		offset = offsetof(struct entry, accumulated);
+		e->accumulated = le64_to_cpu(readq_relaxed(reg + offset));
+
+		e->last_entered_at = get_time_in_sec(e->last_entered_at);
+		e->last_exited_at = get_time_in_sec(e->last_exited_at);
+		e->accumulated = get_time_in_sec(e->accumulated);
+
+		reg += sizeof(struct entry);
+
+		memcpy(stat_type, &e->stat_type, sizeof(u32));
+
+		time_in_last_mode = e->last_exited_at - e->last_entered_at;
+		time_since_last_mode = get_time_in_sec(__arch_counter_get_cntvct()) - e->last_exited_at;
+
+		if (e->accumulated == last_accumulated[i])
+			buf_ptr += sprintf(buf_ptr, " *");
+		last_accumulated[i] = e->accumulated;
+
+		buf_ptr += sprintf(buf_ptr, "%s(%d, %llu, %llu, %llu)",
+			stat_type, e->count, time_in_last_mode, time_since_last_mode, e->accumulated);
+
+		if (i < (debug_drv->config->num_records - 1))
+			buf_ptr += sprintf(buf_ptr, ", ");
+		else
+			buf_ptr += sprintf(buf_ptr, "\n");
+	}
+
+	printk(KERN_INFO "%s", buf);
+
+	return ;
+}
+EXPORT_SYMBOL(debug_soc_stats_show);
+#endif
+
 static int soc_sleep_stats_create_sysfs(struct platform_device *pdev,
 					struct soc_sleep_stats_data *drv)
 {
@@ -227,6 +294,10 @@ static int soc_sleep_stats_probe(struct platform_device *pdev)
 		pr_err("ioremap failed\n");
 		return -ENOMEM;
 	}
+
+#if IS_ENABLED(CONFIG_SEC_PM)
+	debug_drv = drv;
+#endif
 
 	platform_set_drvdata(pdev, drv);
 	return 0;

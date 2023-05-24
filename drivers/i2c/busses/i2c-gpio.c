@@ -500,6 +500,9 @@ static struct platform_driver i2c_gpio_driver = {
 	.remove		= i2c_gpio_remove,
 };
 
+#ifdef CONFIG_QGKI
+bool i2c_gpio_init_done = false;
+#endif
 static int __init i2c_gpio_init(void)
 {
 	int ret;
@@ -507,7 +510,9 @@ static int __init i2c_gpio_init(void)
 	ret = platform_driver_register(&i2c_gpio_driver);
 	if (ret)
 		printk(KERN_ERR "i2c-gpio: probe failed: %d\n", ret);
-
+#ifdef CONFIG_QGKI
+	i2c_gpio_init_done = true;
+#endif
 	return ret;
 }
 subsys_initcall(i2c_gpio_init);

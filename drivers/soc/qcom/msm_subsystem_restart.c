@@ -37,10 +37,20 @@
 
 #include "peripheral-loader.h"
 
+#if IS_ENABLED(CONFIG_SEC_DEBUG)
+#include <linux/sec_debug.h>
+#endif
+
 #define DISABLE_SSR 0x9889deed
 /* If set to 0x9889deed, call to subsystem_restart_dev() returns immediately */
 static uint disable_restart_work;
 module_param(disable_restart_work, uint, 0644);
+
+static bool silent_ssr;
+static char ril_fcr[16];
+#define STOP_REASON_0_BIT 0x10
+#define STOP_REASON_1_BIT 0x20
+#define STOP_REASON_BIT	(STOP_REASON_0_BIT | STOP_REASON_1_BIT)
 
 /* The maximum shutdown timeout is the product of MAX_LOOPS and DELAY_MS. */
 #define SHUTDOWN_ACK_MAX_LOOPS	100
@@ -478,6 +488,14 @@ static int is_ramdump_enabled(struct subsys_device *dev)
 	if (dev->desc->ramdump_disable_irq)
 		return !dev->desc->ramdump_disable;
 
+	/* 2 means only WLAN RAM dump is needed */
+	if (enable_ramdumps == 2) {
+		if (!strcmp(dev->desc->name, "wpss"))
+			return enable_ramdumps;
+		else
+			return 0;
+	}
+
 	return enable_ramdumps;
 }
 
@@ -509,6 +527,9 @@ static void notif_timeout_handler(struct timer_list *t)
 		SSR_NOTIF_TIMEOUT_WARN(unknown_err_msg);
 	}
 
+#if IS_ENABLED(CONFIG_SEC_DEBUG_SUMMARY)
+	sec_debug_summary_set_timeout_subsys(timeout_data->source_name, timeout_data->dest_name);
+#endif
 }
 
 static void _setup_timeout(struct subsys_desc *source_ss,
@@ -990,6 +1011,15 @@ static void subsystem_restart_wq_func(struct work_struct *work)
 	track->p_state = SUBSYS_RESTARTING;
 	spin_unlock_irqrestore(&track->s_lock, flags);
 
+#if IS_ENABLED(CONFIG_SEC_DEBUG)
+	if (sec_debug_is_enabled()) {
+		/* Collect ram dumps for all subsystems in order here */
+		pr_info("%s: collect ssr ramdump..\n", __func__);
+		for_each_subsys_device(list, count, NULL, subsystem_ramdump);
+		pr_info("%s: ..done\n", __func__);
+	}
+#endif
+
 	/* Collect ram dumps for all subsystems in order here */
 	for_each_subsys_device(list, count, NULL, subsystem_ramdump);
 
@@ -1060,6 +1090,11 @@ static void device_restart_work_hdlr(struct work_struct *work)
 	 * sync() and fclose() on attempting the dump.
 	 */
 	msleep(100);
+
+	if (!strncmp(dev->desc->name, "modem", 5) && strlen(ril_fcr))
+		panic("RIL triggered %s crash %s",
+								dev->desc->name, ril_fcr);
+
 	panic("subsys-restart: Resetting the SoC - %s crashed.",
 							dev->desc->name);
 }
@@ -1067,6 +1102,9 @@ static void device_restart_work_hdlr(struct work_struct *work)
 int subsystem_restart_dev(struct subsys_device *dev)
 {
 	const char *name;
+#if IS_ENABLED(CONFIG_SEC_DEBUG_SUMMARY)
+	int ssr_disable = 1;
+#endif
 
 	if (!get_device(&dev->dev))
 		return -ENODEV;
@@ -1079,6 +1117,49 @@ int subsystem_restart_dev(struct subsys_device *dev)
 	name = dev->desc->name;
 
 	subsys_send_early_notifications(dev->early_notify);
+
+#if IS_ENABLED(CONFIG_SEC_DEBUG_SUMMARY)
+	if ((sec_debug_summary_is_modem_separate_debug_ssr() ==
+				SEC_DEBUG_MODEM_SEPARATE_EN)
+			&& strcmp(name, "slpi")
+			&& strcmp(name, "adsp")
+			&& strcmp(name, "wlan")
+			&& strcmp(name, "wpss")
+			&& strcmp(name, "cdsp")) {
+		pr_info("SSR separated by cp magic!!\n");
+		ssr_disable = sec_debug_is_enabled_for_ssr();
+	} else
+		pr_info("SSR by only ap debug level!!\n");
+
+	if (!sec_debug_is_enabled() || (!ssr_disable))
+		dev->restart_level = RESET_SUBSYS_COUPLED;
+	else
+		dev->restart_level = RESET_SOC;
+#endif
+
+	if (!strcmp(name, "wlan") || !strcmp(name, "wpss")) {
+#if IS_ENABLED(CONFIG_SEC_DEBUG)
+		if (!sec_debug_is_enabled() || enable_ramdumps != 3) {
+#else
+		if (enable_ramdumps != 3) {
+#endif
+			pr_info("wpss : RESET_SUBSYS");
+			dev->restart_level = RESET_SUBSYS_COUPLED;
+		} else {
+			pr_info("wpss : RESET_SOC");
+			dev->restart_level = RESET_SOC;
+		}
+	}
+	
+	/* force modem silent ssr */
+	if (!strncmp(name, "modem", 5)) {
+		if (silent_ssr) {
+			dev->restart_level = RESET_SUBSYS_COUPLED;
+			silent_ssr = false;
+		}
+		qcom_smem_state_update_bits(dev->desc->state, 
+			STOP_REASON_BIT | BIT(dev->desc->force_stop_bit), 0x0);
+	}
 
 	/*
 	 * If a system reboot/shutdown is underway, ignore subsystem errors.
@@ -1134,6 +1215,32 @@ int subsystem_restart(const char *name)
 }
 EXPORT_SYMBOL(subsystem_restart);
 
+int subsys_force_stop(struct msm_ipc_subsys_request *req)
+{
+	struct subsys_device *subsys = find_subsys_device(req->name);
+
+	/* NOTE: it supports only "modem" */
+	if (strncmp(req->name, "modem", 5) || !subsys) {
+		pr_err("unsupported subsys: %s\n", req->name);
+		return -ENODEV;
+	}
+
+	silent_ssr = req->request_id;
+	pr_err("silent_ssr %d: %s\n", silent_ssr, req->name);
+
+	/* set reset reason gpio for modem */
+	qcom_smem_state_update_bits(subsys->desc->state, STOP_REASON_BIT,
+						silent_ssr ? STOP_REASON_1_BIT : STOP_REASON_0_BIT);
+
+	/* set RIL force crash reason if needed */
+	if (!silent_ssr)
+		strncpy(ril_fcr, req->reason, sizeof(ril_fcr) - 1);
+
+	subsys->desc->crash_shutdown(subsys->desc);
+	return 0;
+}
+EXPORT_SYMBOL(subsys_force_stop);
+
 int subsystem_crashed(const char *name)
 {
 	struct subsys_device *dev = find_subsys_device(name);
@@ -1173,6 +1280,30 @@ enum crash_status subsys_get_crash_status(struct subsys_device *dev)
 	return dev->crashed;
 }
 EXPORT_SYMBOL(subsys_get_crash_status);
+
+#if IS_ENABLED(CONFIG_SEC_PCIE)
+bool is_subsystem_crash(const char *name)
+{
+	struct subsys_device *dev = find_subsys_device(name);
+
+	if (!dev)
+		return false;
+
+	return subsys_get_crash_status(dev) ? true : false;
+}
+EXPORT_SYMBOL(is_subsystem_crash);
+
+int is_subsystem_online(const char *name)
+{
+	struct subsys_device *dev = find_subsys_device(name);
+
+	if (!dev)
+		return false;
+
+	return dev->count;
+}
+EXPORT_SYMBOL(is_subsystem_online);
+#endif
 
 static struct subsys_device *desc_to_subsys(struct device *d)
 {

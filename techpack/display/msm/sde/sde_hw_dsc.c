@@ -57,6 +57,10 @@ static void sde_hw_dsc_config(struct sde_hw_dsc *hw_dsc,
 	if (ich_reset_override)
 		data = 3 << 28;
 
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+	pr_debug("%s ich_reset_override : %d \n", __func__, ich_reset_override);
+#endif
+
 	data |= (initial_lines << 20);
 	data |= (dsc->slice_last_group_size << 18);
 	/* integer bpp support only */

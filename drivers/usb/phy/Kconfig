@@ -226,4 +226,10 @@ config MSM_HSUSB_PHY
 	  Synopsys DWC3 USB IPs on MSM SOCs. This driver expects to configure the
 	  PHY with a dedicated register I/O memory region.
 
+config USB_PHY_TUNING_QCOM
+	bool "USB PHY TUNING QCOM"
+	depends on ARCH_QCOM
+	help
+	  Enable this to tune usb phy register.
+
 endmenu

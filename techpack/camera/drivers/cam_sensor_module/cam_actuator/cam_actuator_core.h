@@ -63,4 +63,23 @@ int32_t cam_actuator_driver_cmd(struct cam_actuator_ctrl_t *a_ctrl, void *arg);
  */
 void cam_actuator_shutdown(struct cam_actuator_ctrl_t *a_ctrl);
 
+#if defined(CONFIG_SAMSUNG_OIS_MCU_STM32) || defined(CONFIG_SAMSUNG_ACTUATOR_PREVENT_SHAKING)
+int32_t cam_actuator_power_up(struct cam_actuator_ctrl_t *a_ctrl);
+int32_t cam_actuator_power_down(struct cam_actuator_ctrl_t *a_ctrl);
+#endif
+#if defined(CONFIG_SAMSUNG_OIS_MCU_STM32)
+int16_t cam_actuator_move_for_ois_test(struct cam_actuator_ctrl_t *a_ctrl);
+int16_t cam_actuator_move_for_ois_read_hall_cal_test(struct cam_actuator_ctrl_t *a_ctrl, uint16_t af_position);
+#endif
+#if defined(CONFIG_SAMSUNG_ACTUATOR_PREVENT_SHAKING)
+int32_t cam_actuator_default_init_setting(struct cam_actuator_ctrl_t *a_ctrl);
+#endif
+#if defined(CONFIG_SAMSUNG_HW_SOFTLANDING)
+int32_t cam_actuator_i2c_read(struct cam_actuator_ctrl_t *a_ctrl, uint32_t addr,uint32_t *data,enum camera_sensor_i2c_type addr_type,enum camera_sensor_i2c_type data_type);
+int32_t cam_actuator_i2c_write(struct cam_actuator_ctrl_t *a_ctrl, uint32_t reg_addr,uint32_t reg_data, uint32_t data_type);
+int32_t cam_actuator_get_status(struct cam_actuator_ctrl_t *a_ctrl, uint16_t *info);
+void cam_actuator_busywait(struct cam_actuator_ctrl_t *a_ctrl);
+int32_t cam_actuator_check_pwr(struct cam_hw_soc_info *soc_info);
+int32_t cam_actuator_do_soft_landing(struct cam_actuator_ctrl_t *a_ctrl);
+#endif
 #endif /* _CAM_ACTUATOR_CORE_H_ */

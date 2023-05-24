@@ -15,6 +15,9 @@
 #include "dp_display.h"
 #include "dp_pll.h"
 #include "dp_hpd.h"
+#if defined(CONFIG_SEC_DISPLAYPORT)
+#include "secdp.h"
+#endif
 
 #define DEBUG_NAME "drm_dp"
 

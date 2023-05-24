@@ -68,7 +68,7 @@ struct dummy_hcd_module_parameters {
 static struct dummy_hcd_module_parameters mod_data = {
 	.is_super_speed = false,
 	.is_high_speed = true,
-	.num = 1,
+	.num = 0,
 };
 module_param_named(is_super_speed, mod_data.is_super_speed, bool, S_IRUGO);
 MODULE_PARM_DESC(is_super_speed, "true to simulate SuperSpeed connection");

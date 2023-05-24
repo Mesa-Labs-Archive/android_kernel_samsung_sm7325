@@ -822,8 +822,8 @@ static int cam_req_mgr_component_master_bind(struct device *dev)
 		goto req_mgr_core_fail;
 	}
 
-	g_dev.state = true;
 	INIT_LIST_HEAD(&cam_req_mgr_ordered_sd_list);
+	g_dev.state = true;
 
 	if (g_cam_req_mgr_timer_cachep == NULL) {
 		g_cam_req_mgr_timer_cachep = kmem_cache_create("crm_timer",

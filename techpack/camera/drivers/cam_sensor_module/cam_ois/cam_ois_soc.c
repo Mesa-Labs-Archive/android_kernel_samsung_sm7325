@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2017-2019, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/of.h>
@@ -41,10 +41,6 @@ static int cam_ois_get_dt_data(struct cam_ois_ctrl_t *o_ctrl)
 		return rc;
 	}
 
-	rc = cam_sensor_util_regulator_powerup(soc_info);
-	if (rc < 0)
-		return rc;
-
 	if (!soc_info->gpio_data) {
 		CAM_INFO(CAM_OIS, "No GPIO found");
 		return 0;
@@ -72,6 +68,31 @@ static int cam_ois_get_dt_data(struct cam_ois_ctrl_t *o_ctrl)
 			return rc;
 		}
 	}
+
+#if defined(CONFIG_SAMSUNG_OIS_MCU_STM32)
+	rc = of_property_read_u32(of_node, "slave-addr",
+		&o_ctrl->slave_addr);
+	if (rc < 0) {
+		pr_err("%s failed rc %d\n", __func__, rc);
+	}
+	o_ctrl->io_master_info.client->addr = o_ctrl->slave_addr;
+	o_ctrl->reset_ctrl_gpio =
+		power_info->gpio_num_info->gpio_num[SENSOR_RESET];
+	o_ctrl->boot0_ctrl_gpio =
+		power_info->gpio_num_info->gpio_num[SENSOR_CUSTOM_GPIO1];
+
+	rc = of_property_read_u32_array(of_node, "pole-values",
+		o_ctrl->poles, sizeof(o_ctrl->poles)/sizeof(o_ctrl->poles[0]));
+	if (rc) {
+		CAM_ERR(CAM_OIS, "No pole value found, rc=%d", rc);
+	}
+
+	rc = of_property_read_u32(of_node, "gyro-orientation",
+		&o_ctrl->gyro_orientation);
+	if (rc) {
+		CAM_ERR(CAM_OIS, "failed to read gyro-orientation");
+	}
+#endif
 
 	return rc;
 }

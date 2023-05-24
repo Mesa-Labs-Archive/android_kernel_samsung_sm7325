@@ -9,6 +9,7 @@
 #include <linux/of_platform.h>
 #include <linux/nvmem-provider.h>
 #include <linux/regmap.h>
+#include <soc/qcom/watchdog.h>
 
 #define SDAM_MEM_START			0x40
 #define REGISTER_MAP_ID			0x40
@@ -107,6 +108,7 @@ static int sdam_probe(struct platform_device *pdev)
 	struct nvmem_config *sdam_config;
 	unsigned int val = 0;
 	int rc;
+	unsigned int BOOT1_OFF_REASON = 0, BOOT1_FAULT_REASON1 = 0;
 
 	sdam = devm_kzalloc(&pdev->dev, sizeof(*sdam), GFP_KERNEL);
 	if (!sdam)
@@ -134,6 +136,29 @@ static int sdam_probe(struct platform_device *pdev)
 		pr_err("Failed to read SDAM_SIZE rc=%d\n", rc);
 		return -EINVAL;
 	}
+	
+	if (sdam->base == 0x7200)
+	{
+		rc = regmap_read(sdam->regmap, sdam->base + 0x6D, &BOOT1_OFF_REASON);
+		if (rc < 0)
+		{
+			pr_err("Failed to read SDAM 0x726D");
+			return -EINVAL;
+		}
+		rc = regmap_read(sdam->regmap, sdam->base + 0x6E, &BOOT1_FAULT_REASON1);
+		if (rc < 0)
+		{
+			pr_err("Failed to read SDAM 0x726E");
+			return -EINVAL;
+		}
+		
+		if ((BOOT1_FAULT_REASON1 == 0x01 || BOOT1_FAULT_REASON1 == 0x04) && (BOOT1_OFF_REASON == 0x40)) //Only TRUE when BOOT1_OFF_REASON == 0x40 (i.e. POFF is FAULT_SEQ due to GP_FAULT0, 2. SDAM will be updated every PON cycle)
+		{
+			pr_err("PMIC FAULT occured->fault reason: %d , off_reason: %d\n", BOOT1_FAULT_REASON1, BOOT1_OFF_REASON);
+			panic("PMIC FAULT occured");
+		}
+	}
+
 	sdam->size = val * 32;
 
 	sdam_config->dev = &pdev->dev;

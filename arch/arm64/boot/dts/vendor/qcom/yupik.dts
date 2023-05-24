@@ -6,4 +6,5 @@
 	model = "Qualcomm Technologies, Inc. Yupik SoC";
 	compatible = "qcom,yupik";
 	qcom,board-id = <0 0>;
+	dtbo-version = <0>;
 };

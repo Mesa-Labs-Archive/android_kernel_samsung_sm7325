@@ -13,6 +13,7 @@
 
 static struct v4l2_subdev *g_cci_subdev[MAX_CCI];
 static struct dentry *debugfs_root;
+struct device *is_dev = NULL;
 
 struct v4l2_subdev *cam_cci_get_subdev(int cci_dev_index)
 {
@@ -138,7 +139,12 @@ irqreturn_t cam_cci_irq(int irq_num, void *data)
 
 	if (irq_status0 & CCI_IRQ_STATUS_0_RST_DONE_ACK_BMSK) {
 		struct cam_cci_master_info *cci_master_info;
+		CAM_INFO(CAM_CCI, "MO_RESET_PENDING: %d M1_RESET_PENDING: %d",
+			cci_dev->cci_master_info[MASTER_0].reset_pending,
+			cci_dev->cci_master_info[MASTER_1].reset_pending);
 		if (cci_dev->cci_master_info[MASTER_0].reset_pending == true) {
+			CAM_INFO(CAM_CCI, "rst_done invoked for m0 status: %d",
+				cci_dev->cci_master_info[MASTER_0].status);
 			cci_master_info = &cci_dev->cci_master_info[MASTER_0];
 			cci_dev->cci_master_info[MASTER_0].reset_pending =
 				false;
@@ -149,6 +155,9 @@ irqreturn_t cam_cci_irq(int irq_num, void *data)
 			complete_all(&cci_master_info->th_complete);
 		}
 		if (cci_dev->cci_master_info[MASTER_1].reset_pending == true) {
+			CAM_INFO(CAM_CCI, "rst_done invoked for m1 status: %d",
+				cci_dev->cci_master_info[MASTER_1].status);
+
 			cci_master_info = &cci_dev->cci_master_info[MASTER_1];
 			cci_dev->cci_master_info[MASTER_1].reset_pending =
 				false;
@@ -293,8 +302,8 @@ irqreturn_t cam_cci_irq(int irq_num, void *data)
 			CAM_ERR(CAM_CCI,
 				"Base:%pK,cci: %d, M0_Q0 NACK ERROR: 0x%x",
 				base, cci_dev->soc_info.index, irq_status0);
-			cam_cci_dump_registers(cci_dev, MASTER_0,
-					QUEUE_0);
+			// cam_cci_dump_registers(cci_dev, MASTER_0,
+			// 		QUEUE_0);
 			complete_all(&cci_dev->cci_master_info[MASTER_0]
 				.report_q[QUEUE_0]);
 		}
@@ -302,8 +311,8 @@ irqreturn_t cam_cci_irq(int irq_num, void *data)
 			CAM_ERR(CAM_CCI,
 				"Base:%pK,cci: %d, M0_Q1 NACK ERROR: 0x%x",
 				base, cci_dev->soc_info.index, irq_status0);
-			cam_cci_dump_registers(cci_dev, MASTER_0,
-					QUEUE_1);
+			// cam_cci_dump_registers(cci_dev, MASTER_0,
+			// 		QUEUE_1);
 			complete_all(&cci_dev->cci_master_info[MASTER_0]
 			.report_q[QUEUE_1]);
 		}
@@ -325,8 +334,8 @@ irqreturn_t cam_cci_irq(int irq_num, void *data)
 			CAM_ERR(CAM_CCI,
 				"Base:%pK, cci: %d, M1_Q0 NACK ERROR: 0x%x",
 				base, cci_dev->soc_info.index, irq_status0);
-			cam_cci_dump_registers(cci_dev, MASTER_1,
-					QUEUE_0);
+			// cam_cci_dump_registers(cci_dev, MASTER_1,
+			// 		QUEUE_0);
 			complete_all(&cci_dev->cci_master_info[MASTER_1]
 			.report_q[QUEUE_0]);
 		}
@@ -334,8 +343,8 @@ irqreturn_t cam_cci_irq(int irq_num, void *data)
 			CAM_ERR(CAM_CCI,
 				"Base:%pK, cci: %d, M1_Q1 NACK ERROR: 0x%x",
 				base, cci_dev->soc_info.index, irq_status0);
-			cam_cci_dump_registers(cci_dev, MASTER_1,
-				QUEUE_1);
+			// cam_cci_dump_registers(cci_dev, MASTER_1,
+			// 	QUEUE_1);
 			complete_all(&cci_dev->cci_master_info[MASTER_1]
 			.report_q[QUEUE_1]);
 		}
@@ -570,6 +579,8 @@ static int cam_cci_platform_probe(struct platform_device *pdev)
 	rc = component_add(&pdev->dev, &cam_cci_component_ops);
 	if (rc)
 		CAM_ERR(CAM_CCI, "failed to add component rc: %d", rc);
+
+	is_dev = &pdev->dev;
 
 	return rc;
 }

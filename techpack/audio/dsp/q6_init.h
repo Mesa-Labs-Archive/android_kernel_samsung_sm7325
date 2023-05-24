@@ -58,6 +58,10 @@ static inline void avtimer_exit(void)
 	return;
 }
 #endif
+#ifdef CONFIG_SEC_SND_ADAPTATION
+int voice_adaptation_init(void);
+void voice_adaptation_exit(void);
+#endif /* CONFIG_SEC_SND_ADAPTATION */
 void msm_audio_ion_exit(void);
 void rtac_exit(void);
 void core_exit(void);

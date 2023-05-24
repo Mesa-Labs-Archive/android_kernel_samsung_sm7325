@@ -347,6 +347,16 @@ struct rcu_state {
 	const char *name;			/* Name of structure. */
 	char abbr;				/* Abbreviated name. */
 
+	/* debug info */
+	unsigned long gp_req_activity_ts;
+	struct task_struct *gp_req_activity_task;
+	short gp_req_activity_last_gp_flag;
+	unsigned long gp_wake_time_ts;
+	struct task_struct *gp_wake_task;
+	unsigned long last_skip_ts;
+	struct task_struct *last_skip_task;
+	short last_skip_flag;
+
 	raw_spinlock_t ofl_lock ____cacheline_internodealigned_in_smp;
 						/* Synchronize offline with */
 						/*  GP pre-initialization. */

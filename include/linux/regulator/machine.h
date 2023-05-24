@@ -253,7 +253,7 @@ static inline void regulator_has_full_constraints(void)
 }
 #endif
 
-#ifdef CONFIG_REGULATOR_QTI_DEBUG
+#if IS_ENABLED(CONFIG_SEC_PM)
 void regulator_debug_print_enabled(void);
 #else
 static inline void regulator_debug_print_enabled(void)

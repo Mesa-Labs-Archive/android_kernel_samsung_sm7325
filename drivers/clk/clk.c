@@ -24,6 +24,10 @@
 
 #include "clk.h"
 
+#if IS_ENABLED(CONFIG_SEC_DEBUG_POWER_LOG)
+#include <linux/sec_debug.h>
+#endif
+
 static DEFINE_SPINLOCK(enable_lock);
 static DEFINE_MUTEX(prepare_lock);
 
@@ -89,6 +93,9 @@ struct clk_core {
 #ifdef CONFIG_DEBUG_FS
 	struct dentry		*dentry;
 	struct hlist_node	debug_node;
+#endif
+#if IS_ENABLED(CONFIG_SEC_PM)
+	struct hlist_node	sec_debug_node;
 #endif
 	struct kref		ref;
 };
@@ -2153,13 +2160,18 @@ static void clk_change_rate(struct clk_core *core)
 	if (core->flags & CLK_OPS_PARENT_ENABLE)
 		clk_core_prepare_enable(parent);
 
+#if IS_ENABLED(CONFIG_SEC_DEBUG_POWER_LOG)
+	sec_debug_clock_rate_log(core->name, core->new_rate, raw_smp_processor_id());
+#endif
 	trace_clk_set_rate(core, core->new_rate);
 
 	if (!skip_set_rate && core->ops->set_rate)
 		core->ops->set_rate(core->hw, core->new_rate, best_parent_rate);
 
 	trace_clk_set_rate_complete(core, core->new_rate);
-
+#if IS_ENABLED(CONFIG_SEC_DEBUG_POWER_LOG)
+	sec_debug_clock_rate_complete_log(core->name, core->new_rate, raw_smp_processor_id());
+#endif
 	core->rate = clk_recalc(core, best_parent_rate);
 
 	if (core->flags & CLK_SET_RATE_UNGATE) {
@@ -2975,6 +2987,59 @@ bool clk_is_match(const struct clk *p, const struct clk *q)
 }
 EXPORT_SYMBOL_GPL(clk_is_match);
 
+#if IS_ENABLED(CONFIG_SEC_PM)
+static DEFINE_MUTEX(sec_clk_debug_lock);
+static HLIST_HEAD(sec_clk_debug_list);
+
+static int sec_clock_debug_print_clock(struct clk_core *c)
+{
+	char *start = "\t";
+	struct clk *clk;
+
+	if (!c || !c->prepare_count)
+		return 0;
+
+	pr_info("    ");
+	clk = c->hw->clk;
+
+	do {
+		c = clk->core;
+		pr_cont("%s%s:%u:%u [%ld]", start,
+				c->name,
+				c->prepare_count,
+				c->enable_count,
+				c->rate);
+		start = " -> ";
+	} while ((clk = clk_get_parent(clk)));
+
+	pr_cont("\n");
+
+	return 1;
+}
+
+void sec_clock_debug_print_enabled(void)
+{
+	struct clk_core *core;
+	int cnt = 0;
+	
+	if (!mutex_trylock(&sec_clk_debug_lock))
+		return;
+
+	pr_info("Enabled clocks:\n");
+	
+	hlist_for_each_entry(core, &sec_clk_debug_list, sec_debug_node)
+		cnt += sec_clock_debug_print_clock(core);
+
+	if (cnt)
+		pr_info("Enabled clock count: %d\n", cnt);
+	else
+		pr_info("No clocks enabled.\n");
+
+	mutex_unlock(&sec_clk_debug_lock);
+}
+EXPORT_SYMBOL(sec_clock_debug_print_enabled);
+#endif
+
 /***        debugfs support        ***/
 
 #ifdef CONFIG_DEBUG_FS
@@ -3471,7 +3536,7 @@ static const struct file_operations clk_enabled_list_fops = {
 	.release	= seq_release,
 };
 
-static u32 debug_suspend;
+static u32 debug_suspend = 1;
 
 /*
  * Print the names of all enabled clocks and their parents if
@@ -3821,8 +3886,18 @@ unlock:
 
 	clk_prepare_unlock();
 
+#if IS_ENABLED(CONFIG_SEC_PM)
+	if (!ret) {
+		clk_debug_register(core);
+		mutex_lock(&sec_clk_debug_lock);
+		hlist_add_head(&core->sec_debug_node, &sec_clk_debug_list);
+		mutex_unlock(&sec_clk_debug_lock);
+	}
+#else
+
 	if (!ret)
 		clk_debug_register(core);
+#endif
 
 	return ret;
 }
@@ -4266,6 +4341,12 @@ void clk_unregister(struct clk *clk)
 		return;
 
 	clk_debug_unregister(clk->core);
+
+#if IS_ENABLED(CONFIG_SEC_PM)
+	mutex_lock(&sec_clk_debug_lock);
+	hlist_del_init(&clk->core->sec_debug_node);
+	mutex_unlock(&sec_clk_debug_lock);	
+#endif
 
 	clk_prepare_lock();
 

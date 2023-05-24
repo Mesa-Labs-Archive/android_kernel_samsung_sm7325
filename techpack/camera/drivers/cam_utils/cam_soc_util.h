@@ -475,7 +475,7 @@ int cam_soc_util_clk_put(struct clk **clk);
  * @return:             Success or failure
  */
 int cam_soc_util_clk_enable(struct clk *clk, const char *clk_name,
-	int32_t clk_rate, unsigned long *applied_clock_rate);
+	int32_t clk_rate);
 
 /**
  * cam_soc_util_set_clk_rate_level()
@@ -491,7 +491,7 @@ int cam_soc_util_clk_enable(struct clk *clk, const char *clk_name,
  * @return:             Success or failure
  */
 int cam_soc_util_set_clk_rate_level(struct cam_hw_soc_info *soc_info,
-	enum cam_vote_level clk_level, bool do_not_set_src_clk);
+	enum cam_vote_level clk_level);
 
 /**
  * cam_soc_util_clk_disable()

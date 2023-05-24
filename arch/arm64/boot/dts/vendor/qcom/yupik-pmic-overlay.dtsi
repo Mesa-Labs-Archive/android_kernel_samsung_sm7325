@@ -480,7 +480,7 @@
 };
 
 &soc {
-	reboot_reason {
+	reboot_reason: reboot_reason {
 		compatible = "qcom,reboot-reason";
 		nvmem-cells = <&restart_reason>;
 		nvmem-cell-names = "restart_reason";

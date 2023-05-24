@@ -46,6 +46,11 @@ void cam_res_mgr_led_trigger_event(struct led_trigger *trig,
 /**
  * @brief: Check for shared gpio
  *
+ *  Will check whether requeseted device shares the gpio with other
+ *  device. This function check against gpio table from device and
+ *  shared gpio resources has been defined at res-mgr level
+ * @brief: Check for shared gpio
+ *
  *  Will check whether requested device shares the gpio with other
  *  device. This function check against gpio table from device and
  *  shared gpio resources has been defined at res-mgr level

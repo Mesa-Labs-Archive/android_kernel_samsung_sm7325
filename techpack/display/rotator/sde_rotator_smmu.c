@@ -24,6 +24,14 @@
 #include "sde_rotator_smmu.h"
 #include "sde_rotator_debug.h"
 
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+#include <linux/delay.h>
+#include "../msm/samsung/ss_dsi_panel_debug.h"
+#ifdef CONFIG_SEC_DEBUG
+#include <linux/sec_debug.h>
+#endif
+#endif
+
 #define SMMU_SDE_ROT_SEC	"qcom,smmu_sde_rot_sec"
 #define SMMU_SDE_ROT_UNSEC	"qcom,smmu_sde_rot_unsec"
 
@@ -320,6 +328,10 @@ int sde_smmu_map_dma_buf(struct dma_buf *dma_buf,
 	struct sde_smmu_client *sde_smmu = sde_smmu_get_cb(domain);
 	unsigned long attrs = 0;
 
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+	int retry_cnt;
+#endif
+
 	if (!sde_smmu) {
 		SDEROT_ERR("not able to get smmu context\n");
 		return -EINVAL;
@@ -327,6 +339,25 @@ int sde_smmu_map_dma_buf(struct dma_buf *dma_buf,
 
 	rc = dma_map_sg_attrs(sde_smmu->dev, table->sgl, table->nents, dir,
 			attrs);
+
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+	if (!in_interrupt()) {
+		if (!rc) {
+			for (retry_cnt = 0; retry_cnt < 62 ; retry_cnt++) {
+				/* To wait free page by memory reclaim*/
+				usleep_range(16000, 16000);
+
+				SDEROT_ERR("dma map sg failed : retry (%d)\n", retry_cnt);
+				rc = dma_map_sg_attrs(sde_smmu->dev, table->sgl, table->nents, dir,
+						attrs);
+
+				if (!rc)
+					break;
+			}
+		}
+	}
+#endif
+
 	if (!rc) {
 		SDEROT_ERR("dma map sg failed\n");
 		return -ENOMEM;
@@ -334,6 +365,12 @@ int sde_smmu_map_dma_buf(struct dma_buf *dma_buf,
 
 	*iova = table->sgl->dma_address;
 	*size = table->sgl->dma_length;
+
+#if defined(CONFIG_DISPLAY_SAMSUNG) && defined(CONFIG_SEC_DEBUG)
+	if (sec_debug_is_enabled())
+		ss_smmu_debug_map(SMMU_NRT_ROTATOR_DEBUG, table);
+#endif
+
 	return 0;
 }
 
@@ -346,6 +383,11 @@ void sde_smmu_unmap_dma_buf(struct sg_table *table, int domain,
 		SDEROT_ERR("not able to get smmu context\n");
 		return;
 	}
+
+#if defined(CONFIG_DISPLAY_SAMSUNG) && defined(CONFIG_SEC_DEBUG)
+	if (sec_debug_is_enabled())
+		ss_smmu_debug_unmap(SMMU_NRT_ROTATOR_DEBUG, table);
+#endif
 
 	dma_unmap_sg(sde_smmu->dev, table->sgl, table->nents, dir);
 }
@@ -472,6 +514,10 @@ static int sde_smmu_fault_handler(struct iommu_domain *domain,
 	SDEROT_ERR("trigger rotator dump, iova=0x%08lx, flags=0x%x\n",
 			iova, flags);
 	SDEROT_ERR("SMMU device:%s", sde_smmu->dev->kobj.name);
+
+#if defined(CONFIG_DISPLAY_SAMSUNG) && defined(CONFIG_SEC_DEBUG)
+	ss_smmu_debug_log();
+#endif
 
 	/* generate dump, but no panic */
 	SDEROT_EVTLOG_TOUT_HANDLER("rot", "rot_dbg_bus", "vbif_dbg_bus");

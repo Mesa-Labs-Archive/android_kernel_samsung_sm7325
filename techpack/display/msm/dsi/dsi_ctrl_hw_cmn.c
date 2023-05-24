@@ -534,10 +534,10 @@ void dsi_ctrl_hw_cmn_setup_cmd_stream(struct dsi_ctrl_hw *ctrl,
 	DSI_W32(ctrl, DSI_COMMAND_MODE_MDP_STREAM0_TOTAL, stream_total);
 	DSI_W32(ctrl, DSI_COMMAND_MODE_MDP_STREAM1_TOTAL, stream_total);
 
-	if (ctrl->null_insertion_enabled) {
+	if (cfg->null_insertion_enabled) {
 		/* enable null packet insertion */
 		data = (vc_id << 1);
-		data |= 0 << 16;
+		data |= cfg->null_insertion_wc << 16;
 		data |= 0x1;
 		DSI_W32(ctrl, DSI_COMMAND_MODE_NULL_INSERTION_CTRL, data);
 	}

@@ -124,6 +124,16 @@ struct wcd938x_micbias_setting {
 	u8 bias1_cfilt_sel;
 };
 
+#ifdef CONFIG_SND_SOC_IMPED_SENSING
+#define MAX_IMPEDANCE_TABLE 8
+
+struct wcd938x_gain_table {
+	uint32_t min;      /* Min impedance */
+	uint32_t max;      /* Max impedance */
+	int gain;   /* additional gain */
+};
+#endif
+
 struct wcd938x_pdata {
 	struct device_node *rst_np;
 	struct device_node *rx_slave;
@@ -132,6 +142,10 @@ struct wcd938x_pdata {
 
 	struct cdc_regulator *regulator;
 	int num_supplies;
+#ifdef CONFIG_SND_SOC_IMPED_SENSING
+	struct wcd938x_gain_table imp_table[MAX_IMPEDANCE_TABLE];
+#endif
+
 };
 
 struct wcd_ctrl_platform_data {

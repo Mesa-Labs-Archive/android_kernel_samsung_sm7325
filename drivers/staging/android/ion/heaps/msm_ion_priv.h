@@ -31,6 +31,7 @@
 #define ION_SYSTEM_HEAP_NAME	"system"
 #define ION_MM_HEAP_NAME	"mm"
 #define ION_SPSS_HEAP_NAME	"spss"
+#define ION_CAMERA_HEAP_NAME    "camera_heap"
 #define ION_SECURE_CARVEOUT_HEAP_NAME	"secure_carveout"
 #define ION_USER_CONTIG_HEAP_NAME	"user_contig"
 #define ION_QSECOM_HEAP_NAME	"qsecom"

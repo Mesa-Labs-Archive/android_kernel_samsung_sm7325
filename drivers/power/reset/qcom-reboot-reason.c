@@ -14,6 +14,13 @@
 #include <linux/of_address.h>
 #include <linux/nvmem-consumer.h>
 
+#if IS_ENABLED(CONFIG_SEC_DEBUG)
+#include <linux/sec_debug.h>
+#include <soc/qcom/restart.h>
+
+static struct nvmem_cell *nvmem_cell;
+#endif
+
 struct qcom_reboot_reason {
 	struct device *dev;
 	struct notifier_block reboot_nb;
@@ -32,8 +39,20 @@ static struct poweroff_reason reasons[] = {
 	{ "dm-verity device corrupted",	0x04 },
 	{ "dm-verity enforcing",	0x05 },
 	{ "keys clear",			0x06 },
+#if !defined(CONFIG_QGKI)
+	{ "download",			0x15 },
+#endif
+	{ "recovery-update",		0x60 },
 	{}
 };
+
+#if IS_ENABLED(CONFIG_SEC_DEBUG)
+void nvmem_write_pon_restart_reason(u8 pon_rr)
+{
+	if (nvmem_cell)
+		nvmem_cell_write(nvmem_cell, &pon_rr, sizeof(pon_rr));
+}
+#endif
 
 static int qcom_reboot_reason_reboot(struct notifier_block *this,
 				     unsigned long event, void *ptr)
@@ -54,12 +73,22 @@ static int qcom_reboot_reason_reboot(struct notifier_block *this,
 		}
 	}
 
+#if IS_ENABLED(CONFIG_SEC_DEBUG)
+	if (event != SYS_POWER_OFF)
+		sec_debug_update_restart_reason(cmd, 0, RESTART_NORMAL);
+#endif
+
 	return NOTIFY_OK;
 }
 
 static int qcom_reboot_reason_probe(struct platform_device *pdev)
 {
 	struct qcom_reboot_reason *reboot;
+#if IS_ENABLED(CONFIG_SEC_DEBUG)
+	struct nvmem_cell *pon_nvmem;
+	uint8_t *pon_reason;
+	size_t len;
+#endif
 
 	reboot = devm_kzalloc(&pdev->dev, sizeof(*reboot), GFP_KERNEL);
 	if (!reboot)
@@ -71,6 +100,23 @@ static int qcom_reboot_reason_probe(struct platform_device *pdev)
 
 	if (IS_ERR(reboot->nvmem_cell))
 		return PTR_ERR(reboot->nvmem_cell);
+
+#if IS_ENABLED(CONFIG_SEC_DEBUG)
+	nvmem_cell = reboot->nvmem_cell;
+	if (nvmem_cell)
+		sec_nvmem_pon_write = nvmem_write_pon_restart_reason;
+
+	pon_nvmem = nvmem_cell_get(reboot->dev, "pon_reason");
+	if (!IS_ERR(pon_nvmem)) {
+		pon_reason = nvmem_cell_read(pon_nvmem, &len);
+		if (*pon_reason == 0x40) {	// #define PON_PBS_SMPL_RSN 0x0640
+			pr_info("pon_reason get nvmem 0x%02x\n", *pon_reason);
+#ifndef CONFIG_SEC_FACTORY			
+			panic("SMPL Occurred");
+#endif
+		}
+	}
+#endif
 
 	reboot->reboot_nb.notifier_call = qcom_reboot_reason_reboot;
 	reboot->reboot_nb.priority = 255;

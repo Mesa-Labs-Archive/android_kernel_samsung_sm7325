@@ -13,6 +13,7 @@
 #include "dp_display.h"
 #include "dp_pll.h"
 
+#if !defined(CONFIG_SEC_DISPLAYPORT)
 #define DP_DEBUG(fmt, ...)                                                   \
 	do {                                                                 \
 		if (unlikely(drm_debug & DRM_UT_KMS))                        \
@@ -40,6 +41,12 @@
 #define DP_ERR(fmt, ...)                                    \
 	pr_err("[drm:%s][msm-dp-err][%-4d]"fmt, __func__,   \
 		       current->pid, ##__VA_ARGS__)
+#else
+#define DP_WARN(fmt, ...)  pr_warn(fmt, ##__VA_ARGS__)
+#define DP_ERR(fmt, ...)   pr_err(fmt, ##__VA_ARGS__)
+#define DP_INFO(fmt, ...)  pr_info(fmt, ##__VA_ARGS__)
+#define DP_DEBUG(fmt, ...) pr_debug(fmt, ##__VA_ARGS__)
+#endif
 
 #define DEFAULT_DISCONNECT_DELAY_MS 0
 #define MAX_DISCONNECT_DELAY_MS 10000

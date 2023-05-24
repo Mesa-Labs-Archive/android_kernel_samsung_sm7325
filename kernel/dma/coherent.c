@@ -8,6 +8,9 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/dma-mapping.h>
+#ifdef CONFIG_CP_DYNAMIC_MEM_RESERVE
+#include <linux/memblock.h>
+#endif
 
 struct dma_coherent_mem {
 	void		*virt_base;
@@ -123,6 +126,30 @@ int dma_declare_coherent_memory(struct device *dev, phys_addr_t phys_addr,
 	return ret;
 }
 
+static void dma_coherent_show_areas_locked(struct dma_coherent_mem *mem,
+					ssize_t size, int order)
+{
+	unsigned long next_zero_bit, next_set_bit;
+	unsigned long start = 0;
+	unsigned int nr_zero, nr_total = 0;
+	static DEFINE_RATELIMIT_STATE(dma_alloc_coherent_rs, DEFAULT_RATELIMIT_INTERVAL, 1);
+
+	if (__ratelimit(&dma_alloc_coherent_rs) == 0)
+		return;
+	pr_info("number of available pages: ");
+	for (;;) {
+		next_zero_bit = find_next_zero_bit(mem->bitmap, mem->size, start);
+		if (next_zero_bit >= mem->size)
+			break;
+		next_set_bit = find_next_bit(mem->bitmap, mem->size, next_zero_bit);
+		nr_zero = next_set_bit - next_zero_bit;
+		pr_cont("%s%u@%lu", nr_total ? "+" : "", nr_zero, next_zero_bit);
+		nr_total += nr_zero;
+		start = next_zero_bit + nr_zero;
+	}
+	pr_cont("=> %u free of %d total pages\n", nr_total, mem->size);
+}
+
 static void *__dma_alloc_from_coherent(struct device *dev,
 				       struct dma_coherent_mem *mem,
 				       ssize_t size, dma_addr_t *dma_handle)
@@ -138,8 +165,12 @@ static void *__dma_alloc_from_coherent(struct device *dev,
 		goto err;
 
 	pageno = bitmap_find_free_region(mem->bitmap, mem->size, order);
-	if (unlikely(pageno < 0))
+	if (unlikely(pageno < 0)) {
+		pr_err("%s: alloc failed, req-size: %zd bytes, req-order %d\n",
+			__func__, size, order);
+		dma_coherent_show_areas_locked(mem, size, order);
 		goto err;
+	}
 
 	/*
 	 * Memory was found in the coherent area.
@@ -385,4 +416,53 @@ static int __init dma_init_reserved_memory(void)
 core_initcall(dma_init_reserved_memory);
 
 RESERVEDMEM_OF_DECLARE(dma, "shared-dma-pool", rmem_dma_setup);
+
+#ifdef CONFIG_CP_DYNAMIC_MEM_RESERVE
+static unsigned int reserve_mem_region;
+static int __init sec_reserved_mem_setup(char *str)
+{
+	get_option(&str, &reserve_mem_region);
+	return 1;
+}
+early_param("androidboot.reserve_mem_region", sec_reserved_mem_setup);
+
+unsigned int sec_reserved_mem(void)
+{
+	return reserve_mem_region;
+}
+EXPORT_SYMBOL(sec_reserved_mem);
+
+#define RESERVE_MEM_LEVEL1_MASK	(1u << 2)
+#define RESERVE_MEM_LEVEL2_MASK	(1u << 3)
+#define RESERVE_MEM_LEVEL2_SIZE	0x02000000
+#define RESERVE_MEM_FREE_BASE	0x02000000
+#define RESERVE_MEM_FREE_SIZE	0x04000000
+#define RESERVE_MEM_LEVEL1_SIZE	0x06000000
+
+static int __init modem_removed_dma_setup(struct reserved_mem *remem)
+{
+	remem->ops = &rmem_dma_ops;
+
+	if (reserve_mem_region & RESERVE_MEM_LEVEL1_MASK) {
+		pr_info("%s: memory reserved: paddr=%pa, t_size=%ld MiB\n",
+				__func__, &remem->base, (unsigned long)remem->size / SZ_1M);
+	} else if(reserve_mem_region & RESERVE_MEM_LEVEL2_MASK) {
+		memblock_add(remem->base + RESERVE_MEM_FREE_BASE, RESERVE_MEM_FREE_SIZE);
+		remem->size = RESERVE_MEM_LEVEL2_SIZE;
+		pr_info("%s: memory add to memblock: paddr=%pa + 0x%x, t_size=%ld MiB\n",
+				__func__, &remem->base,  RESERVE_MEM_FREE_BASE,
+				(unsigned long)RESERVE_MEM_FREE_SIZE / SZ_1M);
+		pr_info("%s: memory reserved: paddr=%pa, t_size=%ld MiB\n",
+				__func__, &remem->base, (unsigned long)remem->size / SZ_1M);
+	} else {
+		memblock_add(remem->base, remem->size);
+		pr_info("%s: memory add to memblock: paddr=%pa, t_size=%ld MiB\n",
+				__func__, &remem->base, (unsigned long)remem->size / SZ_1M);
+		remem->size = 0;
+	}
+
+	return 0;
+}
+RESERVEDMEM_OF_DECLARE(modem_dma, "modem-removed-dma-pool", modem_removed_dma_setup);
+#endif
 #endif

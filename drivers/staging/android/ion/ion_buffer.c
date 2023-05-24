@@ -10,10 +10,16 @@
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
 #include <linux/dma-noncoherent.h>
+#include <linux/jiffies.h>
+#include <linux/sched/cputime.h>
 
 #define CREATE_TRACE_POINTS
 #include "ion_trace.h"
 #include "ion_private.h"
+
+#ifdef CONFIG_ION_MSM_HEAPS
+#include <uapi/linux/msm_ion_ids.h>
+#endif
 
 static atomic_long_t total_heap_bytes;
 
@@ -135,6 +141,9 @@ struct ion_buffer *ion_buffer_alloc(struct ion_device *dev, size_t len,
 	struct ion_buffer *buffer = NULL;
 	struct ion_heap *heap;
 	char task_comm[TASK_COMM_LEN];
+	unsigned long jiffies_s = jiffies;
+	u64 utime, stime_s, stime_e, stime_d;
+	static DEFINE_RATELIMIT_STATE(show_mem_ratelimit, HZ * 10, 1);
 
 	if (!dev || !len) {
 		return ERR_PTR(-EINVAL);
@@ -146,6 +155,14 @@ struct ion_buffer *ion_buffer_alloc(struct ion_device *dev, size_t len,
 				    __func__, task_comm, current->tgid);
 	}
 
+#ifdef CONFIG_ION_RBIN_HEAP
+	if ((heap_id_mask & ION_CAMERA_HEAP_ID) &&
+	    (heap_id_mask & ~ION_CAMERA_HEAP_ID)) {
+		if (len < SZ_1M)
+			heap_id_mask &= ~ION_CAMERA_HEAP_ID;
+	}
+#endif
+
 	/*
 	 * traverse the list of heaps available in this system in priority
 	 * order.  If the heap type is supported by the client, and matches the
@@ -156,12 +173,17 @@ struct ion_buffer *ion_buffer_alloc(struct ion_device *dev, size_t len,
 	if (!len)
 		return ERR_PTR(-EINVAL);
 
+	task_cputime(current, &utime, &stime_s);
+
 	down_read(&dev->lock);
 	plist_for_each_entry(heap, &dev->heaps, node) {
 		/* if the caller didn't specify this heap id */
 		if (!((1 << heap->id) & heap_id_mask))
 			continue;
+		tracing_mark_begin("%s(%s, %zu, 0x%x, 0x%x)", "ion_alloc",
+				   heap->name, len, heap_id_mask, flags);
 		buffer = ion_buffer_create(heap, dev, len, flags);
+		tracing_mark_end();
 		if (!IS_ERR(buffer))
 			break;
 	}
@@ -172,6 +194,17 @@ struct ion_buffer *ion_buffer_alloc(struct ion_device *dev, size_t len,
 
 	if (IS_ERR(buffer))
 		return ERR_CAST(buffer);
+
+	task_cputime(current, &utime, &stime_e);
+	stime_d = stime_e - stime_s;
+	if (stime_d / NSEC_PER_MSEC > 100) {
+		pr_info("%s ion_heap_id: %d mask=0x%x timeJS(ms):%u/%llu len:%zu\n",
+			__func__, heap->id, heap_id_mask,
+			jiffies_to_msecs(jiffies - jiffies_s),
+			stime_d / NSEC_PER_MSEC, len);
+		if (__ratelimit(&show_mem_ratelimit))
+			show_mem(0, NULL);
+	}
 
 	return buffer;
 }

@@ -51,6 +51,10 @@
 #include "sd_ops.h"
 #include "sdio_ops.h"
 
+#if IS_ENABLED(CONFIG_SEC_ABC)
+#include <linux/sti/abc_common.h>
+#endif
+
 /* The max erase timeout, used when host->max_busy_timeout isn't specified */
 #define MMC_ERASE_TIMEOUT_MS	(60 * 1000) /* 60 s */
 #define SD_DISCARD_TIMEOUT_MS	(250)
@@ -3063,6 +3067,25 @@ static int mmc_rescan_try_freq(struct mmc_host *host, unsigned freq)
 	return -EIO;
 }
 
+#if IS_ENABLED(CONFIG_SEC_STORAGE_MMC) && IS_ENABLED(CONFIG_SEC_ABC)
+void _mmc_trigger_abc_event(struct mmc_host *host)
+{
+	if (host->ops->get_cd && host->ops->get_cd(host)) {
+		host->card_removed_cnt++;
+		if ((host->card_removed_cnt % 5) == 0)
+#if IS_ENABLED(CONFIG_SEC_FACTORY)
+			sec_abc_send_event("MODULE=storage@INFO=sd_removed_err");
+#else
+			sec_abc_send_event("MODULE=storage@WARN=sd_removed_err");
+#endif
+	}
+}
+#else
+void _mmc_trigger_abc_event(struct mmc_host *host)
+{
+}
+#endif
+
 int _mmc_detect_card_removed(struct mmc_host *host)
 {
 	int ret;
@@ -3087,6 +3110,10 @@ int _mmc_detect_card_removed(struct mmc_host *host)
 	if (ret) {
 		mmc_card_set_removed(host->card);
 		pr_debug("%s: card remove detected\n", mmc_hostname(host));
+		ST_LOG("<%s> %s: card remove detected\n", __func__,
+				mmc_hostname(host));
+
+		_mmc_trigger_abc_event(host);
 	}
 
 	return ret;
@@ -3258,6 +3285,89 @@ void mmc_stop_host(struct mmc_host *host)
 	mmc_power_off(host);
 	mmc_release_host(host);
 }
+
+#ifdef CONFIG_PM_SLEEP
+/* Do the card removal on suspend if card is assumed removeable
+ * Do that in pm notifier while userspace isn't yet frozen, so we will be able
+   to sync the card.
+*/
+static int mmc_pm_notify(struct notifier_block *notify_block,
+			unsigned long mode, void *unused)
+{
+	struct mmc_host *host = container_of(
+		notify_block, struct mmc_host, pm_notify);
+	unsigned long flags;
+	int err = 0;
+#if IS_ENABLED(CONFIG_SEC_STORAGE_MMC)
+	int present = 0;
+#endif
+
+	switch (mode) {
+	case PM_HIBERNATION_PREPARE:
+	case PM_SUSPEND_PREPARE:
+	case PM_RESTORE_PREPARE:
+		spin_lock_irqsave(&host->lock, flags);
+		host->rescan_disable = 1;
+		spin_unlock_irqrestore(&host->lock, flags);
+		cancel_delayed_work_sync(&host->detect);
+
+		if (!host->bus_ops)
+			break;
+
+		/* Validate prerequisites for suspend */
+		if (host->bus_ops->pre_suspend)
+			err = host->bus_ops->pre_suspend(host);
+		if (!err)
+			break;
+
+		if (!mmc_card_is_removable(host)) {
+			dev_warn(mmc_dev(host),
+				 "pre_suspend failed for non-removable host: "
+				 "%d\n", err);
+			/* Avoid removing non-removable hosts */
+			break;
+		}
+
+		/* Calling bus_ops->remove() with a claimed host can deadlock */
+		host->bus_ops->remove(host);
+		mmc_claim_host(host);
+		mmc_detach_bus(host);
+		mmc_power_off(host);
+		mmc_release_host(host);
+		host->pm_flags = 0;
+		break;
+
+	case PM_POST_SUSPEND:
+	case PM_POST_HIBERNATION:
+	case PM_POST_RESTORE:
+
+		spin_lock_irqsave(&host->lock, flags);
+		host->rescan_disable = 0;
+#if IS_ENABLED(CONFIG_SEC_STORAGE_MMC)
+		if (host->ops->get_cd) {
+			present = host->ops->get_cd(host);
+			mmc_gpiod_update_status(host, present);
+		}
+#endif
+		spin_unlock_irqrestore(&host->lock, flags);
+		_mmc_detect_change(host, 0, false);
+
+	}
+
+	return 0;
+}
+
+void mmc_register_pm_notifier(struct mmc_host *host)
+{
+	host->pm_notify.notifier_call = mmc_pm_notify;
+	register_pm_notifier(&host->pm_notify);
+}
+
+void mmc_unregister_pm_notifier(struct mmc_host *host)
+{
+	unregister_pm_notifier(&host->pm_notify);
+}
+#endif
 
 static int __init mmc_init(void)
 {

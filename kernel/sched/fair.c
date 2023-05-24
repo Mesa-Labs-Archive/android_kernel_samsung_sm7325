@@ -22,6 +22,12 @@
  */
 #include "sched.h"
 
+#ifdef CONFIG_SEC_PERF_MANAGER
+#include <linux/cpufreq.h>
+#include <linux/percpu.h>
+#include <trace/events/power.h>
+#endif
+
 #include <trace/events/sched.h>
 #include <trace/hooks/sched.h>
 
@@ -30,6 +36,10 @@
 #ifdef CONFIG_SMP
 static inline bool task_fits_max(struct task_struct *p, int cpu);
 #endif /* CONFIG_SMP */
+
+#ifdef CONFIG_SEC_PERF_MANAGER
+extern unsigned long get_max_fps_util(int group_id);
+#endif /* CONFIG_SEC_PERF_MANAGER */
 
 /*
  * Targeted preemption latency for CPU-bound tasks:
@@ -46,6 +56,13 @@ static inline bool task_fits_max(struct task_struct *p, int cpu);
  */
 unsigned int sysctl_sched_latency			= 6000000ULL;
 static unsigned int normalized_sysctl_sched_latency	= 6000000ULL;
+
+#ifdef CONFIG_SEC_PERF_MANAGER
+DEFINE_PER_CPU(unsigned long, fps_boosted_util);
+DEFINE_PER_CPU(int, fps_boosted_task_count);
+DEFINE_PER_CPU(u64, fps_boosted_last_time);
+DEFINE_PER_CPU(int, fps_group_id);
+#endif /* CONFIG_SEC_PERF_MANAGER */
 
 /*
  * The initial- and re-scaling of tunables is configurable
@@ -3732,7 +3749,17 @@ static inline unsigned long task_util_est(struct task_struct *p)
 #ifdef CONFIG_UCLAMP_TASK
 static inline unsigned long uclamp_task_util(struct task_struct *p)
 {
-	return clamp(task_util_est(p),
+	unsigned long clamp_util = task_util_est(p);
+#ifdef CONFIG_SEC_PERF_MANAGER
+	unsigned long boost_util;
+
+	if (p->drawing_flag) {
+		boost_util = get_max_fps_util(p->drawing_flag);
+		clamp_util = max(clamp_util, boost_util);
+	}
+#endif
+
+	return clamp(clamp_util,
 		     uclamp_eff_value(p, UCLAMP_MIN),
 		     uclamp_eff_value(p, UCLAMP_MAX));
 }
@@ -5489,6 +5516,13 @@ enqueue_task_fair(struct rq *rq, struct task_struct *p, int flags)
 	int idle_h_nr_running = task_has_idle_policy(p);
 	int task_new = !(flags & ENQUEUE_WAKEUP);
 
+#ifdef CONFIG_SEC_PERF_MANAGER
+	unsigned long next_fps_boosted_util;
+	int boosted_cnt;
+	int cur_group_id = -1, next_group_id = -1;
+	int alloc_cpu = -1;
+#endif
+
 	/*
 	 * The code below (indirectly) updates schedutil which looks at
 	 * the cfs_rq utilization to select a frequency.
@@ -5496,6 +5530,34 @@ enqueue_task_fair(struct rq *rq, struct task_struct *p, int flags)
 	 * estimated utilization, before we update schedutil.
 	 */
 	util_est_enqueue(&rq->cfs, p);
+
+#ifdef CONFIG_SEC_PERF_MANAGER
+	if (p->drawing_flag) {
+		alloc_cpu = cpu_of(rq);
+
+		/* Get current value from run queue */
+		boosted_cnt = per_cpu(fps_boosted_task_count, alloc_cpu);
+		cur_group_id = per_cpu(fps_group_id, alloc_cpu);
+		next_group_id = p->drawing_flag;
+
+		/* Get new values. */
+		if (boosted_cnt < 0)
+			boosted_cnt = 0;
+
+		boosted_cnt = boosted_cnt + 1;
+		next_fps_boosted_util = get_max_fps_util(p->drawing_flag);
+
+		/* Put new values into run queue. */
+		per_cpu(fps_boosted_task_count, alloc_cpu) = boosted_cnt;
+		if (cur_group_id == next_group_id) {
+			per_cpu(fps_boosted_util, alloc_cpu) = next_fps_boosted_util;
+		} else {
+			per_cpu(fps_boosted_util, alloc_cpu) =
+				max(get_max_fps_util(cur_group_id), next_fps_boosted_util);
+			per_cpu(fps_group_id, alloc_cpu) = next_group_id;
+		}
+	}
+#endif /* CONFIG_SEC_PERF_MANAGER */
 
 	/*
 	 * If in_iowait is set, the code below may not trigger any cpufreq
@@ -5601,6 +5663,45 @@ static void dequeue_task_fair(struct rq *rq, struct task_struct *p, int flags)
 	struct sched_entity *se = &p->se;
 	int task_sleep = flags & DEQUEUE_SLEEP;
 	int idle_h_nr_running = task_has_idle_policy(p);
+
+#ifdef CONFIG_SEC_PERF_MANAGER
+	unsigned long next_fps_boosted_util = 0;
+	int cur_group_id = -1, next_group_id = -1;
+	int alloc_cpu = -1;
+	int boosted_cnt;
+	struct task_struct *rq_task;
+
+	if (p->drawing_flag) {
+		alloc_cpu = cpu_of(rq);
+		boosted_cnt = per_cpu(fps_boosted_task_count, alloc_cpu);
+		cur_group_id = per_cpu(fps_group_id, alloc_cpu);
+		next_group_id = p->drawing_flag;
+
+		if (boosted_cnt > 0)
+			boosted_cnt = boosted_cnt - 1;
+
+		/*
+		*  Initialize fps_boosted_util value when there's no task on alloc_cpu.
+		*  if not, update fps util as a current fps util.
+		*/
+		if (boosted_cnt == 0) {
+			per_cpu(fps_boosted_util, alloc_cpu) = 0;
+			per_cpu(fps_group_id, alloc_cpu) = 0;
+		} else {
+			list_for_each_entry(rq_task, &(rq->cfs_tasks), se.group_node) {
+				if (rq_task != p && rq_task->drawing_flag &&
+					(get_max_fps_util(rq_task->drawing_flag) > next_fps_boosted_util)) {
+					next_fps_boosted_util = get_max_fps_util(p->drawing_flag);
+					next_group_id = rq_task->drawing_flag;
+				}
+			}
+			per_cpu(fps_boosted_util, alloc_cpu) = next_fps_boosted_util;
+			per_cpu(fps_group_id, alloc_cpu) = next_group_id;
+		}
+		/* Set a new values up into run queue. */
+		per_cpu(fps_boosted_task_count, alloc_cpu) = boosted_cnt;
+	}
+#endif /* CONFIG_SEC_PERF_MANAGER */
 
 	for_each_sched_entity(se) {
 		cfs_rq = cfs_rq_of(se);
@@ -12277,6 +12378,20 @@ __init void init_sched_fair_class(void)
 #endif /* SMP */
 
 }
+
+#ifdef CONFIG_SEC_PERF_MANAGER
+unsigned long get_task_util(struct task_struct *p)
+{
+	return task_util_est(p);
+}
+EXPORT_SYMBOL_GPL(get_task_util);
+
+unsigned long get_max_capacity(int cpu)
+{
+	return capacity_orig_of(cpu);
+}
+EXPORT_SYMBOL_GPL(get_max_capacity);
+#endif /* CONFIG_SEC_PERF_MANAGER */
 
 /*
  * Helper functions to facilitate extracting info from tracepoints.

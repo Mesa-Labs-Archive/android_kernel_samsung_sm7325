@@ -143,7 +143,6 @@ static void dsi_catalog_cmn_init(struct dsi_ctrl_hw *ctrl,
  * @version:     DSI controller version.
  * @index:       DSI controller instance ID.
  * @phy_isolation_enabled:       DSI controller works isolated from phy.
- * @null_insertion_enabled:      DSI controller inserts null packet.
  *
  * This function setups the catalog information in the dsi_ctrl_hw object.
  *
@@ -151,7 +150,7 @@ static void dsi_catalog_cmn_init(struct dsi_ctrl_hw *ctrl,
  */
 int dsi_catalog_ctrl_setup(struct dsi_ctrl_hw *ctrl,
 		   enum dsi_ctrl_version version, u32 index,
-		   bool phy_isolation_enabled, bool null_insertion_enabled)
+		   bool phy_isolation_enabled)
 {
 	int rc = 0;
 
@@ -162,7 +161,6 @@ int dsi_catalog_ctrl_setup(struct dsi_ctrl_hw *ctrl,
 	}
 
 	ctrl->index = index;
-	ctrl->null_insertion_enabled = null_insertion_enabled;
 	set_bit(DSI_CTRL_VIDEO_TPG, ctrl->feature_map);
 	set_bit(DSI_CTRL_CMD_TPG, ctrl->feature_map);
 	set_bit(DSI_CTRL_VARIABLE_REFRESH_RATE, ctrl->feature_map);
@@ -296,6 +294,11 @@ static void dsi_catalog_phy_4_0_init(struct dsi_phy_hw *phy)
 	phy->ops.set_continuous_clk = dsi_phy_hw_v4_0_set_continuous_clk;
 	phy->ops.commit_phy_timing = dsi_phy_hw_v4_0_commit_phy_timing;
 	phy->ops.phy_idle_off = dsi_phy_hw_v4_0_phy_idle_off;
+
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+	phy->ops.store_str = dsi_phy_hw_v4_0_store_str;
+	phy->ops.store_emphasis= dsi_phy_hw_v4_0_store_emphasis;
+#endif
 }
 
 /**

@@ -686,11 +686,90 @@ static void pmic_gpio_config_dbg_show(struct pinctrl_dev *pctldev,
 	}
 }
 
+#if IS_ENABLED(CONFIG_SEC_PM)
+static void pmic_gpio_sec_dbg_show(struct pinctrl_dev *pctldev,
+				      struct seq_file *s)
+{
+	struct pmic_gpio_state *state = pinctrl_dev_get_drvdata(pctldev);
+	struct pmic_gpio_pad *pad;
+	int val, i, ret, function;
+
+	static const char *const biases[] = {
+		"pull-up 30uA", "pull-up 1.5uA", "pull-up 31.5uA",
+		"pull-up 1.5uA + 30uA boost", "pull-down 10uA", "no pull"
+	};
+	static const char *const buffer_types[] = {
+		"push-pull", "open-drain", "open-source"
+	};
+	static const char *const strengths[] = {
+		"no", "high", "medium", "low"
+	};
+
+	for (i = 0; i < state->chip.ngpio; i++) {
+		pad = pctldev->desc->pins[i].drv_data;
+		val = pmic_gpio_read(state, pad, PMIC_GPIO_REG_EN_CTL);
+		
+		if (val < 0 || !(val >> PMIC_GPIO_REG_MASTER_EN_SHIFT)) {
+			if (IS_ERR_OR_NULL(s))
+				pr_info(" gpio%-2d: ---\n", i);
+			else
+				seq_printf(s, " gpio%-2d: ---\n", i);
+		} else {
+			if (pad->input_enabled) {
+				ret = pmic_gpio_read(state, pad, PMIC_MPP_REG_RT_STS);
+				if (ret < 0)
+					continue;
+
+				ret &= PMIC_MPP_REG_RT_STS_VAL_MASK;
+				pad->out_value = ret;
+			}
+
+			if (!pad->lv_mv_type &&
+				pad->function >= PMIC_GPIO_FUNC_INDEX_FUNC3) {
+				function = pad->function + (PMIC_GPIO_FUNC_INDEX_DTEST1 -
+					PMIC_GPIO_FUNC_INDEX_FUNC3);
+			} else {
+				function = pad->function;
+			}
+
+			if (IS_ERR_OR_NULL(s)) {
+				pr_info(" gpio%-2d: %-7s %-4s vin-%d %-7s %-2s %-7s atest-%d dtest-%d\n",
+						   i,
+						   pmic_gpio_functions[function],
+						   pad->output_enabled ? "OUT" : "IN",
+						   pad->power_source,
+						   biases[pad->pullup],
+						   buffer_types[pad->buffer_type],
+						   pad->out_value ? "H" : "L",
+						   strengths[pad->strength],
+						   pad->atest,
+						   pad->dtest_buffer);
+			} else {
+				seq_printf(s, " gpio%-2d: %-7s %-4s vin-%d %-7s %-2s %-7s atest-%d dtest-%d\n",
+						   i,
+						   pmic_gpio_functions[function],
+						   pad->output_enabled ? "OUT" : "IN",
+						   pad->power_source,
+						   biases[pad->pullup],
+						   buffer_types[pad->buffer_type],
+						   pad->out_value ? "H" : "L",
+						   strengths[pad->strength],
+						   pad->atest,
+						   pad->dtest_buffer);
+			}
+		}
+	}
+}
+#endif
+
 static const struct pinconf_ops pmic_gpio_pinconf_ops = {
 	.is_generic			= true,
 	.pin_config_group_get		= pmic_gpio_config_get,
 	.pin_config_group_set		= pmic_gpio_config_set,
 	.pin_config_group_dbg_show	= pmic_gpio_config_dbg_show,
+#if IS_ENABLED(CONFIG_SEC_PM)
+	.pin_config_sec_dbg_show	= pmic_gpio_sec_dbg_show,
+#endif
 };
 
 static int pmic_gpio_direction_input(struct gpio_chip *chip, unsigned pin)

@@ -71,6 +71,7 @@
 			reg = <ION_DISPLAY_HEAP_ID>;
 			memory-region = <&non_secure_display_memory>;
 			qcom,ion-heap-type = "DMA";
+			status = "disabled";
 		};
 	};
 };

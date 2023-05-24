@@ -112,6 +112,10 @@ struct sde_power_data_bus_handle {
 	struct sde_power_bus_scaling_data curr_val;
 	u32 data_paths_cnt;
 	bool bus_active_only;
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+	u64 in_ab_quota;
+	u64 in_ib_quota;
+#endif
 };
 
 /**
@@ -124,6 +128,18 @@ struct sde_power_reg_bus_handle {
 	struct icc_path *reg_bus_hdl;
 	enum mdss_bus_vote_type curr_idx;
 	struct sde_power_bus_scaling_data scale_table[VOTE_INDEX_MAX];
+};
+
+/**
+ * struct sde_min_ib_vote: ib votes on data bus
+ * @min_core_ib: ib vote on mnoc
+ * @min_llcc_ib: ib vote on llcc
+ * @min_dram_ib: ib vote on dram
+ */
+struct sde_min_ib_vote {
+	u32 min_core_ib;
+	u32 min_llcc_ib;
+	u32 min_dram_ib;
 };
 
 /*

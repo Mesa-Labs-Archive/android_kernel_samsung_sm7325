@@ -29,6 +29,8 @@
 #include "cam_flash_dev.h"
 #endif
 
+#include "cam_sysfs_init.h"
+
 #include "a5_core.h"
 #include "ipe_core.h"
 #include "bps_core.h"
@@ -112,6 +114,7 @@ static const struct camera_submodule_component camera_sensor[] = {
 	IS_REACHABLE(CONFIG_LEDS_QTI_FLASH)
 	{&cam_flash_init_module, &cam_flash_exit_module},
 #endif
+	{&cam_sysfs_init_module, &cam_sysfs_exit_module}
 #endif
 };
 

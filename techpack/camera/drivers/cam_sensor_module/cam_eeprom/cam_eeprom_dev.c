@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2017-2020, The Linux Foundation. All rights reserved.
  */
 
 #include "cam_eeprom_dev.h"
@@ -83,12 +83,14 @@ int32_t cam_eeprom_update_i2c_info(struct cam_eeprom_ctrl_t *e_ctrl,
 			return -EINVAL;
 		}
 		cci_client->cci_i2c_master = e_ctrl->cci_i2c_master;
-		cci_client->sid = (i2c_info->slave_addr) >> 1;
+		if (i2c_info->slave_addr > 0)
+			cci_client->sid = (i2c_info->slave_addr) >> 1;
 		cci_client->retries = 3;
 		cci_client->id_map = 0;
 		cci_client->i2c_freq_mode = i2c_info->i2c_freq_mode;
 	} else if (e_ctrl->io_master_info.master_type == I2C_MASTER) {
-		e_ctrl->io_master_info.client->addr = i2c_info->slave_addr;
+		if (i2c_info->slave_addr > 0)
+			e_ctrl->io_master_info.client->addr = i2c_info->slave_addr;
 		CAM_DBG(CAM_EEPROM, "Slave addr: 0x%x", i2c_info->slave_addr);
 	} else if (e_ctrl->io_master_info.master_type == SPI_MASTER) {
 		CAM_ERR(CAM_EEPROM, "Slave addr: 0x%x Freq Mode: %d",
@@ -171,7 +173,7 @@ static int cam_eeprom_init_subdev(struct cam_eeprom_ctrl_t *e_ctrl)
 	e_ctrl->v4l2_dev_str.close_seq_prior = CAM_SD_CLOSE_MEDIUM_PRIORITY;
 
 	rc = cam_register_subdev(&(e_ctrl->v4l2_dev_str));
-	if (rc)
+	if ((rc < 0) && (rc != -EPROBE_DEFER))
 		CAM_ERR(CAM_SENSOR, "Fail with cam_register_subdev");
 
 	return rc;
@@ -595,6 +597,9 @@ static struct i2c_driver cam_eeprom_i2c_driver = {
 	.remove = cam_eeprom_i2c_driver_remove,
 	.driver = {
 		.name = "msm_eeprom",
+		.owner = THIS_MODULE,
+		.of_match_table = cam_eeprom_dt_match,
+		.suppress_bind_attrs = true,
 	},
 };
 

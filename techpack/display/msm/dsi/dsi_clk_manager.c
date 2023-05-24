@@ -621,6 +621,10 @@ error:
 	return rc;
 }
 
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+extern void tcon_prepare(void);
+#endif
+
 static int dsi_display_link_clk_enable(struct dsi_link_clks *clks,
 	enum dsi_lclk_type l_type, u32 ctrl_count, u32 master_ndx)
 {
@@ -645,6 +649,11 @@ static int dsi_display_link_clk_enable(struct dsi_link_clks *clks,
 		}
 	}
 
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+	if ((l_type & DSI_LINK_LP_CLK) && (ctrl_count==1))
+		tcon_prepare();
+#endif
+
 	if (l_type & DSI_LINK_HS_CLK) {
 		rc = dsi_link_hs_clk_start(&m_clks->hs_clks,
 			DSI_LINK_CLK_START, master_ndx);
@@ -667,6 +676,9 @@ static int dsi_display_link_clk_enable(struct dsi_link_clks *clks,
 						rc);
 				goto error_disable_master;
 			}
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+			tcon_prepare();
+#endif
 		}
 
 		if (l_type & DSI_LINK_HS_CLK) {
@@ -729,6 +741,10 @@ error:
 	return rc;
 }
 
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+extern void force_sustain_lp11_for_sleep(void);
+#endif
+
 static int dsi_display_link_clk_disable(struct dsi_link_clks *clks,
 	enum dsi_lclk_type l_type, u32 ctrl_count, u32 master_ndx)
 {
@@ -752,6 +768,9 @@ static int dsi_display_link_clk_disable(struct dsi_link_clks *clks,
 			continue;
 
 		if (l_type & DSI_LINK_LP_CLK) {
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+			force_sustain_lp11_for_sleep();
+#endif
 			rc = dsi_link_lp_clk_stop(&clk->lp_clks);
 			if (rc)
 				DSI_ERR("failed to turn off lp link clocks, rc=%d\n",
