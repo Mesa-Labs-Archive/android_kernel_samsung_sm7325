@@ -25,3 +25,31 @@ config MACH_A52SXQ_CHN_TW
 	bool "Samsung A52SXQ CHN TW"
 	help
 	  Support for Samsung A52SXQ CHN TW device.
+
+config SEC_M52XQ_PROJECT
+	depends on ARCH_YUPIK
+	default n
+	bool "Samsung M52XQ Project"
+	help
+	  Support for Samsung M52XQ Project
+
+config MACH_M52XQ_EUR_OPEN
+	depends on SEC_M52XQ_PROJECT
+	default n
+	bool "Samsung M52XQ EUR OPEN"
+	help
+	  Support for Samsung M52XQ EUR OPEN device.
+
+config MACH_M52XQ_SWA_INS
+	depends on SEC_M52XQ_PROJECT
+	default n
+	bool "Samsung M52XQ SWA INS"
+	help
+	  Support for Samsung M52XQ SWA INS device.
+
+config MACH_M52XQ_CIS_SER
+	depends on SEC_M52XQ_PROJECT
+	default n
+	bool "Samsung M52XQ CIS SER"
+	help
+	  Support for Samsung M52XQ CIS SER device.
