@@ -38,7 +38,9 @@ source "techpack/camera/drivers/Kconfig"
 source "test/Kconfig"
 
 source "techpack/display/msm/samsung/S6E3FC3_AMS646YD01_LO/Kconfig" # ADDED BY LEGO AUTOMATICALLY: DO NOT SUBMIT
+if SEC_M52XQ_PROJECT
 source "techpack/display/msm/samsung/SW83109_BF067XMM/Kconfig" # ADDED BY LEGO AUTOMATICALLY: DO NOT SUBMIT
 source "techpack/display/msm/samsung/S6E3HAB_AMB667AN01/Kconfig" # ADDED BY LEGO AUTOMATICALLY: DO NOT SUBMIT
 source "techpack/display/msm/samsung/S6E3FA9_AMB667UM36/Kconfig" # ADDED BY LEGO AUTOMATICALLY: DO NOT SUBMIT
+endif
 source "techpack/display/msm/samsung/Kconfig" # ADDED BY LEGO AUTOMATICALLY: DO NOT SUBMIT
