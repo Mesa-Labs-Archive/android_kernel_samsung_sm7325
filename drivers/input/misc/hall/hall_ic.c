@@ -124,7 +124,7 @@ static ssize_t hall_detect_show(struct device *dev,
 	int state;
 
 	list_for_each_entry(hall, &hall_ic_list, list) {
-		if (hall->event != SW_FLIP)
+		if (hall->event != SW_LID)
 			continue;
 		hall->state = !!gpio_get_value_cansleep(hall->gpio);
 		state = hall->state ^ hall->active_low;
@@ -378,7 +378,7 @@ static void hall_ic_work(struct work_struct *work)
 		state ? "close" : "open", hall->state);
 
 	if (hall->input) {
-		input_report_switch(hall->input, hall->event, state);
+		input_report_switch(hall->input, SW_LID, state);
 		input_sync(hall->input);
 	}
 
@@ -496,7 +496,7 @@ static int hall_ic_input_dev_register(struct hall_ic_data *hall)
 	}
 
 	hall->input = input;
-	input_set_capability(input, EV_SW, hall->event);
+	input_set_capability(input, EV_SW, SW_LID);
 	input->name = hall->name;
 	input->phys = hall->name;
 	input->open = hall_ic_open;
@@ -769,7 +769,7 @@ static int hall_ic_resume(struct device *dev)
 		pr_info("%s %s %s(%d)\n", __func__, hall->name,
 			state ? "close" : "open", hall->state);
 		disable_irq_wake(hall->irq);
-		input_report_switch(hall->input, hall->event, state);
+		input_report_switch(hall->input, SW_LID, state);
 		input_sync(hall->input);
 	}
 	return 0;

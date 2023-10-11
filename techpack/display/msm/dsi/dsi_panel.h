@@ -125,6 +125,7 @@ struct dsi_backlight_config {
 	u32 bl_scale;
 	u32 bl_scale_sv;
 	bool bl_inverted_dbv;
+	u32 real_bl_level;
 
 	int en_gpio;
 	/* PWM params */
@@ -203,6 +204,12 @@ struct dsi_panel_ops {
 	int (*bl_unregister)(struct dsi_panel *panel);
 	int (*parse_gpios)(struct dsi_panel *panel);
 	int (*parse_power_cfg)(struct dsi_panel *panel);
+};
+
+#define BRIGHTNESS_ALPHA_PAIR_LEN 2
+struct brightness_alpha_pair {
+	u16 brightness;
+	u8 alpha;
 };
 
 struct dsi_panel {
@@ -427,5 +434,7 @@ int __ss_dsi_panel_parse_cmd_sets(struct dsi_panel_cmd_set *cmd,
 					char (*ss_cmd_set_prop)[SS_CMD_PROP_STR_LEN]);
 int dsi_panel_boost_regulator(struct dsi_panel *panel, bool enable);
 #endif
+
+u32 dsi_panel_get_fod_dim_alpha(struct dsi_panel *panel);
 
 #endif /* _DSI_PANEL_H_ */

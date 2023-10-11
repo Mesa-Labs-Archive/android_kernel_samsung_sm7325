@@ -1424,12 +1424,21 @@ static void secure_touch_stop(struct stm_ts_data *ts, bool stop)
 	}
 }
 
+static ssize_t fod_pressed_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct stm_ts_data *ts = dev_get_drvdata(dev);
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", ts->fod_pressed);
+}
+
 #if IS_ENABLED(CONFIG_GH_RM_DRV)
 static DEVICE_ATTR_RW(trusted_touch_enable);
 static DEVICE_ATTR_RW(trusted_touch_event);
 static DEVICE_ATTR_RO(trusted_touch_type);
 #endif
 static DEVICE_ATTR_RW(secure_touch_enable);
+static DEVICE_ATTR_RO(fod_pressed);
 static DEVICE_ATTR_RO(secure_touch);
 static DEVICE_ATTR_RO(secure_ownership);
 static struct attribute *secure_attr[] = {
@@ -1439,6 +1448,7 @@ static struct attribute *secure_attr[] = {
 	&dev_attr_trusted_touch_type.attr,
 #endif
 	&dev_attr_secure_touch_enable.attr,
+	&dev_attr_fod_pressed.attr,
 	&dev_attr_secure_touch.attr,
 	&dev_attr_secure_ownership.attr,
 	NULL,
@@ -1692,10 +1702,14 @@ static void stm_ts_gesture_event(struct stm_ts_data *ts, u8 *event_buff)
 			sec_input_gesture_report(&ts->client->dev, SPONGE_EVENT_TYPE_FOD_PRESS, x, y);
 			input_info(true, &ts->client->dev, "%s: FOD %sPRESS\n",
 					__func__, p_gesture_status->gesture_id ? "" : "LONG");
+			ts->fod_pressed = true;
+			sysfs_notify(&ts->plat_data->input_dev->dev.kobj, NULL, "fod_pressed");
 		} else if (p_gesture_status->gesture_id == STM_TS_SPONGE_EVENT_GESTURE_ID_FOD_RELEASE) {
 			sec_input_gesture_report(&ts->client->dev, SPONGE_EVENT_TYPE_FOD_RELEASE, x, y);
 			input_info(true, &ts->client->dev, "%s: FOD RELEASE\n", __func__);
 			memset(ts->plat_data->fod_data.vi_data, 0x0, ts->plat_data->fod_data.vi_size);
+			ts->fod_pressed = false;
+			sysfs_notify(&ts->plat_data->input_dev->dev.kobj, NULL, "fod_pressed");
 		} else if (p_gesture_status->gesture_id == STM_TS_SPONGE_EVENT_GESTURE_ID_FOD_OUT) {
 			sec_input_gesture_report(&ts->client->dev, SPONGE_EVENT_TYPE_FOD_OUT, x, y);
 			input_info(true, &ts->client->dev, "%s: FOD OUT\n", __func__);
@@ -1774,6 +1788,8 @@ static void stm_ts_coordinate_event(struct stm_ts_data *ts, u8 *event_buff)
 
 static void stm_ts_status_event(struct stm_ts_data *ts, u8 *event_buff)
 {
+	u8 t_id = 0;
+
 	struct stm_ts_event_status *p_event_status;
 
 	p_event_status = (struct stm_ts_event_status *)event_buff;
@@ -1828,6 +1844,14 @@ static void stm_ts_status_event(struct stm_ts_data *ts, u8 *event_buff)
 	} else if (p_event_status->stype == STM_TS_EVENT_STATUSTYPE_VENDORINFO) {
 		if (ts->plat_data->support_ear_detect) {
 			if (p_event_status->status_id == 0x6A) {
+				if (ts->plat_data->power_state == SEC_INPUT_STATE_LPM || (ts->plat_data->coord[t_id].y < 700 && ts->plat_data->coord[t_id].x > 900
+				    && ts->plat_data->coord[t_id].x < 3000)) {
+					// Report actual range when either the area around the sensor is touched or if panel is in LPM state
+					p_event_status->status_data_1 = p_event_status->status_data_1 == 5 || !p_event_status->status_data_1;
+				} else {
+					// Properly reset to 1cm
+					p_event_status->status_data_1 = 1;
+				}
 				ts->hover_event = p_event_status->status_data_1;
 				input_report_abs(ts->plat_data->input_dev_proximity, ABS_MT_CUSTOM, p_event_status->status_data_1);
 				input_sync(ts->plat_data->input_dev_proximity);

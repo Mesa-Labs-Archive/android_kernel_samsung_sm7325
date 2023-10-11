@@ -686,6 +686,7 @@ struct stm_ts_data {
 	int (*stm_ts_systemreset)(struct stm_ts_data *ts, unsigned int msec);
 	int (*stm_ts_wait_for_ready)(struct stm_ts_data *ts);
 	void (*stm_ts_command)(struct stm_ts_data *ts, u8 cmd, bool checkecho);
+	bool fod_pressed;
 };
 
 //core

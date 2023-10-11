@@ -590,15 +590,14 @@ void sec_input_gesture_report(struct device *dev, int id, int x, int y)
 	pdata->gesture_x = x;
 	pdata->gesture_y = y;
 
-	input_report_key(pdata->input_dev, KEY_BLACK_UI_GESTURE, 1);
-	input_sync(pdata->input_dev);
-	input_report_key(pdata->input_dev, KEY_BLACK_UI_GESTURE, 0);
-	input_sync(pdata->input_dev);
-
 	if (id == SPONGE_EVENT_TYPE_SPAY) {
 		snprintf(buff, sizeof(buff), "SPAY");
 		pdata->hw_param.all_spay_count++;
 	} else if (id == SPONGE_EVENT_TYPE_SINGLE_TAP) {
+		input_report_key(pdata->input_dev, KEY_BLACK_UI_GESTURE, 1);
+		input_sync(pdata->input_dev);
+		input_report_key(pdata->input_dev, KEY_BLACK_UI_GESTURE, 0);
+		input_sync(pdata->input_dev);
 		snprintf(buff, sizeof(buff), "SINGLE TAP");
 	} else if (id == SPONGE_EVENT_TYPE_AOD_DOUBLETAB) {
 		snprintf(buff, sizeof(buff), "AOD");
