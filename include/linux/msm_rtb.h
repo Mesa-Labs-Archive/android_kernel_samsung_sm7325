@@ -66,13 +66,23 @@ int uncached_logk(enum logk_event_type log_type, void *data);
 				isb(); \
 			} while (0)
 
+#if IS_ENABLED(CONFIG_QCOM_RTB)
+#define SEC_DEBUG_ETB_WAYPOINT_COND(__cond) \
+	if (!IS_ENABLED(CONFIG_SEC_DEBUG)) \
+		ETB_WAYPOINT; \
+	else if (__cond) \
+		ETB_WAYPOINT;
+#else
+#define SEC_DEBUG_ETB_WAYPOINT_COND(__cond)	ETB_WAYPOINT
+#endif
+
 /* Override the #defines in asm/io.h with the logged ones */
 #define __raw_read_logged(a, _l, _t)    ({ \
 	_t __a; \
 	void *_addr = (void *)(a); \
 	int _ret; \
 	_ret = uncached_logk(LOGK_READL, _addr); \
-	ETB_WAYPOINT; \
+	SEC_DEBUG_ETB_WAYPOINT_COND(_ret); \
 	__a = __raw_read##_l(_addr); \
 	if (_ret) \
 		LOG_BARRIER; \

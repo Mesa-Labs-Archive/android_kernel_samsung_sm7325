@@ -21,6 +21,9 @@
 #include <ipc/apr.h>
 #include "adsp_err.h"
 #include <soc/qcom/secure_buffer.h>
+#ifdef CONFIG_SEC_SND_ADAPTATION
+#include <dsp/q6voice_adaptation.h>
+#endif /* CONFIG_SEC_SND_ADAPTATION */
 
 #define TIMEOUT_MS 1000
 
@@ -2738,6 +2741,12 @@ int adm_arrange_mch_map(struct adm_cmd_device_open_v5 *open, int path,
 		goto non_mch_path;
 	};
 
+	pr_info("%s : channel_mode = %d, num_channel = %d, set_channel_map = %d\n",
+		__func__,
+		channel_mode,
+		open->dev_num_channel,
+		multi_ch_maps[idx].set_channel_map);
+
 	if ((open->dev_num_channel > 2) &&
 		(port_channel_map[port_idx].set_channel_map ||
 		 multi_ch_maps[idx].set_channel_map)) {
@@ -3433,9 +3442,11 @@ int adm_open_v2(int port_id, int path, int rate, int channel_mode, int topology,
 					ec_ref_port_cfg->sampling_rate :
 					this_adm.ec_ref_rx_sampling_rate;
 
-	pr_debug("%s:port %#x path:%d rate:%d mode:%d perf_mode:%d,topo_id %d\n",
+	pr_info("%s:port %#x path:%d rate:%d mode:%d perf_mode:%d,topo_id %d\n",
 		 __func__, port_id, path, rate, channel_mode, perf_mode,
 		 topology);
+	pr_info("%s:bit_width:%d app_type:%#x acdb_id:%d\n",
+		__func__, bit_width, app_type, acdb_id);
 
 	port_id = q6audio_convert_virtual_to_portid(port_id);
 	port_idx = adm_validate_and_get_port_index(port_id);
@@ -3502,6 +3513,18 @@ int adm_open_v2(int port_id, int path, int rate, int channel_mode, int topology,
 		    (rate != ADM_CMD_COPP_OPEN_SAMPLE_RATE_32K))
 			rate = 16000;
 	}
+
+#ifdef CONFIG_SEC_SND_ADAPTATION
+	if ((topology == VPM_TX_SM_LVVEFQ_COPP_TOPOLOGY) ||
+		(topology == VPM_TX_DM_LVVEFQ_COPP_TOPOLOGY) ||
+		(topology == VPM_TX_SM_LVSAFQ_COPP_TOPOLOGY) ||
+		(topology == VPM_TX_DM_LVSAFQ_COPP_TOPOLOGY) ||
+		(topology == VOICE_TX_DIAMONDVOICE_FVSAM_SM) ||
+		(topology == VOICE_TX_DIAMONDVOICE_FVSAM_DM) ||
+		(topology == VOICE_TX_DIAMONDVOICE_FVSAM_QM) ||
+		(topology == VOICE_TX_DIAMONDVOICE_FRSAM_DM))
+		rate = 16000;
+#endif /* CONFIG_SEC_SND_ADAPTATION */
 
 	if (topology == FFECNS_TOPOLOGY) {
 		this_adm.ffecns_port_id = port_id;
@@ -4259,7 +4282,7 @@ int adm_close(int port_id, int perf_mode, int copp_idx)
 	struct audio_cal_info_audproc *audproc_cal_info = NULL;
 	int cal_index = ADM_AUDPROC_PERSISTENT_CAL;
 
-	pr_debug("%s: port_id=0x%x perf_mode: %d copp_idx: %d\n", __func__,
+	pr_info("%s: port_id=0x%x perf_mode: %d copp_idx: %d\n", __func__,
 		 port_id, perf_mode, copp_idx);
 
 	port_id = q6audio_convert_virtual_to_portid(port_id);

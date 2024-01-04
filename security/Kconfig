@@ -223,7 +223,7 @@ config STATIC_USERMODEHELPER
 config STATIC_USERMODEHELPER_PATH
 	string "Path to the static usermode helper binary"
 	depends on STATIC_USERMODEHELPER
-	default "/sbin/usermode-helper"
+	default "/vendor/bin/umh/usermode-helper-replica"
 	help
 	  The binary called by the kernel when any usermode helper
 	  program is wish to be run.  The "real" application's name will
@@ -292,7 +292,32 @@ config LSM
 
 	  If unsure, leave this as the default.
 
-source "security/Kconfig.hardening"
+config SDP
+	bool "Enables SDP"
+	default n
+	help
+	Sensitive Data Protection. Enabled for devices with Samsung Knox.
 
+config DDAR
+	bool "Enables dual encryption"
+	default n
+	help
+	Knox Dual-DAR (Data-At-Rest) protection
+
+config SDP_KEY_DUMP
+	bool "SDP KEY DUMP"
+	default n
+	help
+	For dumping sensitive keying material for CC Certification test.
+	Enabled only for eng and userdebug builds.
+
+source "security/Kconfig.hardening"
+source "security/hdm/Kconfig"
+
+source "security/samsung/defex_lsm/Kconfig" # ADDED BY LEGO AUTOMATICALLY: DO NOT SUBMIT
+source "security/samsung/proca/Kconfig" # ADDED BY LEGO AUTOMATICALLY: DO NOT SUBMIT
+source "security/samsung/proca/gaf/Kconfig" # ADDED BY LEGO AUTOMATICALLY: DO NOT SUBMIT
+source "security/samsung/dsms/Kconfig" # ADDED BY LEGO AUTOMATICALLY: DO NOT SUBMIT
+source "security/samsung/five/Kconfig" # ADDED BY LEGO AUTOMATICALLY: DO NOT SUBMIT
 endmenu
 

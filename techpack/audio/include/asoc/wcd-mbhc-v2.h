@@ -141,12 +141,13 @@ do {                                                    \
 #define GND_MIC_SWAP_THRESHOLD 4
 #define GND_MIC_USBC_SWAP_THRESHOLD 2
 #define WCD_FAKE_REMOVAL_MIN_PERIOD_MS 100
-#define HS_VREF_MIN_VAL 1400
+#define HS_VREF_MIN_VAL 1300
 #define FW_READ_ATTEMPTS 15
 #define FW_READ_TIMEOUT 4000000
 #define FAKE_REM_RETRY_ATTEMPTS 3
 #define HPHL_CROSS_CONN_THRESHOLD 100
 #define HPHR_CROSS_CONN_THRESHOLD 100
+#define MAX_IMPED 60000
 
 #define WCD_MBHC_BTN_PRESS_COMPL_TIMEOUT_MS  50
 #define ANC_DETECT_RETRY_CNT 7
@@ -220,6 +221,8 @@ enum wcd_mbhc_register_function {
 	WCD_MBHC_ADC_MODE,
 	WCD_MBHC_DETECTION_DONE,
 	WCD_MBHC_ELECT_ISRC_EN,
+	WCD_MBHC_EN_SURGE_PROTECTION_HPHL,
+	WCD_MBHC_EN_SURGE_PROTECTION_HPHR,
 	WCD_MBHC_REG_FUNC_MAX,
 };
 
@@ -437,6 +440,7 @@ struct wcd_mbhc_config {
 	bool enable_anc_mic_detect;
 	u32 enable_usbc_analog;
 	bool moisture_duty_cycle_en;
+	bool mbhc_spl_headset;
 };
 
 struct wcd_mbhc_intr {
@@ -551,6 +555,7 @@ struct wcd_mbhc {
 	wait_queue_head_t wait_btn_press;
 	bool is_btn_press;
 	u8 current_plug;
+	u8 plug_before_ssr;
 	bool in_swch_irq_handler;
 	bool hphl_swh; /*track HPHL switch NC / NO */
 	bool gnd_swh; /*track GND switch NC / NO */
@@ -619,6 +624,15 @@ struct wcd_mbhc {
 	bool force_linein;
 	struct device_node *fsa_np;
 	struct notifier_block fsa_nb;
+
+	bool pullup_enable;
+#if defined(CONFIG_SND_SOC_WCD_MBHC_SLOW_DET)
+	bool slow_insertion;
+#endif
+#ifdef CONFIG_SND_SOC_IMPED_SENSING
+	int default_impedance_offset;
+	int impedance_offset;
+#endif
 };
 
 void wcd_mbhc_find_plug_and_report(struct wcd_mbhc *mbhc,

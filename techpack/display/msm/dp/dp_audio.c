@@ -8,6 +8,22 @@
 
 #include <drm/drm_dp_helper.h>
 
+#if defined(CONFIG_SEC_DISPLAYPORT)
+#include "secdp.h"
+#if defined(CONFIG_SEC_DISPLAYPORT_BIGDATA)
+#include <linux/displayport_bigdata.h>
+#endif
+
+#include <linux/sec_displayport.h>
+#if defined(CONFIG_SECDP_SWITCH)
+#include <linux/switch.h>
+
+static struct switch_dev switch_secdp_audio = {
+	.name = "ch_hdmi_audio",
+};
+#endif
+#endif/*CONFIG_SEC_DISPLAYPORT*/
+
 #include "dp_catalog.h"
 #include "dp_audio.h"
 #include "dp_panel.h"
@@ -402,6 +418,11 @@ static int dp_audio_info_setup(struct platform_device *pdev,
 		return 0;
 	}
 
+#if defined(CONFIG_SEC_DISPLAYPORT_BIGDATA)
+	secdp_bigdata_save_item(BD_AUD_CH, params->num_of_channels);
+	secdp_bigdata_save_item(BD_AUD_FREQ, params->sample_rate_hz);
+#endif
+
 	mutex_lock(&audio->ops_lock);
 
 	audio->channels = params->num_of_channels;
@@ -453,6 +474,13 @@ static int dp_audio_get_edid_blk(struct platform_device *pdev,
 
 	blk->audio_data_blk = edid->audio_data_block;
 	blk->audio_data_blk_size = edid->adb_size;
+#if defined(CONFIG_SEC_DISPLAYPORT)
+	print_hex_dump(KERN_DEBUG, "AUDIO_BLK: ",
+			DUMP_PREFIX_NONE, 16, 1, blk->audio_data_blk,
+			blk->audio_data_blk_size, false);
+	secdp_logger_hex_dump(blk->audio_data_blk, "AUDIO_BLK:",
+			blk->audio_data_blk_size);
+#endif
 
 	blk->spk_alloc_data_blk = edid->spkr_alloc_data_block;
 	blk->spk_alloc_data_blk_size = edid->sadb_size;
@@ -576,6 +604,8 @@ static int dp_audio_register_ext_disp(struct dp_audio_private *audio)
 	struct msm_ext_disp_init_data *ext;
 	struct msm_ext_disp_audio_codec_ops *ops;
 
+	DP_DEBUG("+++\n");
+
 	ext = &audio->ext_audio_data;
 	ops = &ext->codec_ops;
 
@@ -663,6 +693,10 @@ end:
 	return rc;
 }
 
+#if defined(CONFIG_SECDP_SWITCH)
+extern int secdp_get_audio_ch(void);
+#endif
+
 static int dp_audio_notify(struct dp_audio_private *audio, u32 state)
 {
 	int rc = 0;
@@ -681,6 +715,14 @@ static int dp_audio_notify(struct dp_audio_private *audio, u32 state)
 	if (rc)
 		goto end;
 
+#if defined(CONFIG_SECDP_SWITCH)
+{
+	int audio_ch = state ? secdp_get_audio_ch() : -1;
+
+	switch_set_state(&switch_secdp_audio, audio_ch);
+	DP_INFO("secdp audio state:0x%02x(%d)\n", audio_ch, audio_ch);
+}
+#endif
 	if (atomic_read(&audio->acked))
 		goto end;
 
@@ -738,11 +780,20 @@ static int dp_audio_on(struct dp_audio *dp_audio)
 		return -EINVAL;
 	}
 
+#if defined(CONFIG_SEC_DISPLAYPORT)
+	if (!secdp_get_cable_status()) {
+		DP_INFO("cable is out\n");
+		return -EINVAL;
+	}
+#endif
+
 	audio = container_of(dp_audio, struct dp_audio_private, dp_audio);
 	if (IS_ERR(audio)) {
 		DP_ERR("invalid input\n");
 		return -EINVAL;
 	}
+
+	DP_DEBUG("+++\n");
 
 	dp_audio_register_ext_disp(audio);
 
@@ -758,7 +809,7 @@ static int dp_audio_on(struct dp_audio *dp_audio)
 	if (rc)
 		goto end;
 
-	DP_DEBUG("success\n");
+	DP_INFO("[AUDIO_ON]success\n");
 end:
 	return rc;
 }
@@ -775,6 +826,8 @@ static int dp_audio_off(struct dp_audio *dp_audio)
 		return -EINVAL;
 	}
 
+	DP_DEBUG("+++\n");
+
 	audio = container_of(dp_audio, struct dp_audio_private, dp_audio);
 
 	if (!atomic_read(&audio->session_on)) {
@@ -784,6 +837,13 @@ static int dp_audio_off(struct dp_audio *dp_audio)
 
 	ext = &audio->ext_audio_data;
 
+#if defined(CONFIG_SEC_DISPLAYPORT)
+	if (!atomic_read(&audio->session_on)) {
+		DP_INFO("dp audio already off\n");
+		return rc;
+	}
+#endif
+
 	work_pending = cancel_delayed_work_sync(&audio->notify_delayed_work);
 	if (work_pending)
 		DP_DEBUG("pending notification work completed\n");
@@ -792,7 +852,7 @@ static int dp_audio_off(struct dp_audio *dp_audio)
 	if (rc)
 		goto end;
 
-	DP_DEBUG("success\n");
+	DP_INFO("[AUDIO_OFF]success\n");
 end:
 	dp_audio_config(audio, EXT_DISPLAY_CABLE_DISCONNECT);
 
@@ -824,6 +884,16 @@ static int dp_audio_create_notify_workqueue(struct dp_audio_private *audio)
 
 	INIT_DELAYED_WORK(&audio->notify_delayed_work, dp_audio_notify_work_fn);
 
+#if defined(CONFIG_SECDP_SWITCH)
+{
+	int rc = switch_dev_register(&switch_secdp_audio);
+
+	if (rc) {
+		DP_INFO("Failed to register secdp_audio switch:%d\n", rc);
+		return -ENODEV;
+	}
+}
+#endif
 	return 0;
 }
 
@@ -831,6 +901,10 @@ static void dp_audio_destroy_notify_workqueue(struct dp_audio_private *audio)
 {
 	if (audio->notify_workqueue)
 		destroy_workqueue(audio->notify_workqueue);
+
+#if defined(CONFIG_SECDP_SWITCH)
+	switch_dev_unregister(&switch_secdp_audio);
+#endif
 }
 
 struct dp_audio *dp_audio_get(struct platform_device *pdev,

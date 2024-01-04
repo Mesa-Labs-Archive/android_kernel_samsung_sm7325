@@ -235,4 +235,8 @@ int timers_dead_cpu(unsigned int cpu);
 #define timers_dead_cpu		NULL
 #endif
 
+#if IS_ENABLED(CONFIG_SEC_DEBUG)
+extern int get_cpu_where_timer_on(struct timer_list *timer);
+#endif
+
 #endif

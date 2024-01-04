@@ -906,8 +906,6 @@ struct dsi_ctrl_hw_ops {
  * @supported_errors:       Number of supported errors.
  * @phy_isolation_enabled:    A boolean property allows to isolate the phy from
  *                          dsi controller and run only dsi controller.
- * @null_insertion_enabled:  A boolean property to allow dsi controller to
- *                           insert null packet.
  * @widebus_support:        48 bit wide data bus is supported.
  * @reset_trig_ctrl:		Boolean to indicate if trigger control needs to
  *				be reset to default.
@@ -931,7 +929,6 @@ struct dsi_ctrl_hw {
 	u64 supported_errors;
 
 	bool phy_isolation_enabled;
-	bool null_insertion_enabled;
 	bool widebus_support;
 	bool reset_trig_ctrl;
 };

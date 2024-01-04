@@ -480,6 +480,11 @@ struct icnss_priv {
 	struct workqueue_struct *soc_update_wq;
 	unsigned long device_config;
 	struct timer_list recovery_timer;
+
+#ifdef CONFIG_SEC_SS_CNSS_FEATURE_SYSFS
+	struct kobject *wifi_kobj;
+    struct completion macloader_done;
+#endif /* CONFIG_SEC_SS_CNSS_FEATURE_SYSFS */
 };
 
 struct icnss_reg_info {

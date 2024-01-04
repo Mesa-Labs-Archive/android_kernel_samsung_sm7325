@@ -413,6 +413,7 @@ int cam_cci_soc_release(struct cci_device *cci_dev,
 
 	if (!(--cci_dev->master_active_slave[master])) {
 		cci_dev->cci_master_info[master].is_initilized = false;
+		cci_dev->cci_master_info[master].status = 0;
 		CAM_DBG(CAM_CCI,
 			"All submodules are released for master: %d", master);
 	}

@@ -1053,6 +1053,7 @@ static int geni_i2c_xfer(struct i2c_adapter *adap,
 {
 	struct geni_i2c_dev *gi2c = i2c_get_adapdata(adap);
 	int i, ret = 0, timeout = 0;
+	u32 geni_ios = 0;
 
 	gi2c->err = 0;
 	atomic_set(&gi2c->is_xfer_in_progress, 1);
@@ -1076,6 +1077,15 @@ static int geni_i2c_xfer(struct i2c_adapter *adap,
 			atomic_set(&gi2c->is_xfer_in_progress, 0);
 			return ret;
 		}
+	}
+
+	geni_ios = geni_read_reg_nolog(gi2c->base, SE_GENI_IOS);
+	if ((geni_ios & 0x3) != 0x3) { //SCL:b'1, SDA:b'0
+		GENI_SE_ERR(gi2c->ipcl, true, gi2c->dev,
+			"IO lines in bad state, Power the slave\n");
+		pm_runtime_mark_last_busy(gi2c->dev);
+		pm_runtime_put_autosuspend(gi2c->dev);
+		return -ENXIO;
 	}
 
 	// WAR : Complete previous pending cancel cmd

@@ -132,9 +132,31 @@ struct notif_data {
 
 #if IS_ENABLED(CONFIG_MSM_SUBSYSTEM_RESTART)
 
+#ifndef __IPC_SUB_IOCTL
+#define __IPC_SUB_IOCTL
+
+#include <linux/soc/qcom/smem_state.h>
+
+#define IPC_SUB_IOCTL_MAGIC (0xC8)
+#define IPC_SUB_IOCTL_SUBSYS_GET_RESTART \
+	_IOR(IPC_SUB_IOCTL_MAGIC, 0, struct msm_ipc_subsys_request)
+
+enum {
+	SUBSYS_CR_REQ = 0,
+	SUBSYS_RES_REQ,
+};
+
+struct msm_ipc_subsys_request {
+	char name[16];
+	char reason[16];
+	int request_id;
+};
+#endif
+
 extern int subsys_get_restart_level(struct subsys_device *dev);
 extern int subsystem_restart_dev(struct subsys_device *dev);
 extern int subsystem_restart(const char *name);
+extern int subsys_force_stop(struct msm_ipc_subsys_request *req);
 extern int subsystem_crashed(const char *name);
 
 extern void *subsystem_get(const char *name);
@@ -156,6 +178,10 @@ static inline void complete_shutdown_ack(struct subsys_desc *desc)
 	complete(&desc->shutdown_ack);
 }
 struct subsys_device *find_subsys_device(const char *str);
+#if IS_ENABLED(CONFIG_SEC_PCIE)
+extern bool is_subsystem_crash(const char *name);
+extern int is_subsystem_online(const char *name);
+#endif
 #else
 
 static inline int subsys_get_restart_level(struct subsys_device *dev)
@@ -169,6 +195,11 @@ static inline int subsystem_restart_dev(struct subsys_device *dev)
 }
 
 static inline int subsystem_restart(const char *name)
+{
+	return 0;
+}
+
+static inline int subsys_force_stop(struct msm_ipc_subsys_request *req)
 {
 	return 0;
 }
@@ -213,6 +244,17 @@ enum crash_status subsys_get_crash_status(struct subsys_device *dev)
 static inline void notify_proxy_vote(struct device *device) { }
 static inline void notify_proxy_unvote(struct device *device) { }
 static inline void notify_before_auth_and_reset(struct device *device) { }
+#if IS_ENABLED(CONFIG_SEC_PCIE)
+static bool is_subsystem_crash(const char *name)
+{
+	return false;
+}
+
+static int is_subsystem_online(const char *name)
+{
+	return false;
+}
+#endif
 #endif /* CONFIG_MSM_SUBSYSTEM_RESTART */
 
 /* Helper wrappers */

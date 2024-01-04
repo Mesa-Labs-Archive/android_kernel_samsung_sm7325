@@ -1,0 +1,27 @@
+config SEC_A52SXQ_PROJECT
+	depends on ARCH_YUPIK
+	default n
+	bool "Samsung A52SXQ Project"
+	help
+	  Support for Samsung A52SXQ Project
+
+config MACH_A52SXQ_EUR_OPEN
+	depends on SEC_A52SXQ_PROJECT
+	default n
+	bool "Samsung A52SXQ EUR OPEN"
+	help
+	  Support for Samsung A52SXQ EUR OPEN device.
+
+config MACH_A52SXQ_KOR_SINGLE
+	depends on SEC_A52SXQ_PROJECT
+	default n
+	bool "Samsung A52SXQ KOR SINGLE"
+	help
+	  Support for Samsung A52SXQ KOR SINGLE device.
+
+config MACH_A52SXQ_CHN_TW
+	depends on SEC_A52SXQ_PROJECT
+	default n
+	bool "Samsung A52SXQ CHN TW"
+	help
+	  Support for Samsung A52SXQ CHN TW device.

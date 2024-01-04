@@ -1808,7 +1808,13 @@ static const struct msm_pingroup yupik_groups[] = {
 };
 
 static const int yupik_reserved_gpios[] = {
-	32, 33, 48, 49, 50, 51, -1
+#if defined(CONFIG_FINGERPRINT_SECURE) && !defined(CONFIG_SEC_FACTORY)
+	56, 57, 58, 59,
+#endif
+#if IS_ENABLED(CONFIG_MST_LDO)
+	99, 100,
+#endif
+	-1
 };
 static struct pinctrl_qup yupik_qup_regs[] = {
 	QUP_I3C(0, QUP_I3C_0_MODE_OFFSET),
@@ -1839,7 +1845,7 @@ static const struct msm_gpio_wakeirq_map yupik_pdc_map[] = {
 	{ 174, 167 },
 };
 
-static const struct msm_pinctrl_soc_data yupik_pinctrl = {
+static struct msm_pinctrl_soc_data yupik_pinctrl = {
 	.pins = yupik_pins,
 	.npins = ARRAY_SIZE(yupik_pins),
 	.functions = yupik_functions,
@@ -1854,9 +1860,11 @@ static const struct msm_pinctrl_soc_data yupik_pinctrl = {
 	.nwakeirq_map = ARRAY_SIZE(yupik_pdc_map),
 };
 
+#if 0 // remove code for disabling wakeup capable function 
 /* By default, all the gpios that are mpm wake capable are enabled.
  * The following list disables the gpios explicitly
  */
+ 
 static const unsigned int config_mpm_wake_disable_gpios[] = { 127 };
 
 static void yupik_pinctrl_config_mpm_wake_disable_gpios(void)
@@ -1868,15 +1876,51 @@ static void yupik_pinctrl_config_mpm_wake_disable_gpios(void)
 		msm_gpio_mpm_wake_set(config_mpm_wake_disable_gpios[i], false);
 }
 
+#else  // using DT format for various model 
+
+static int yupik_pinctrl_no_wake_probe(struct platform_device *pdev)
+{
+	const __be32 *prop;
+	uint32_t *no_wake_gpios;
+	int i, length;
+
+	prop = of_get_property(pdev->dev.of_node, "wakeup-disabled-gpios", &length);
+	if (!prop)
+		return -ENOENT;
+
+	length = length / sizeof(u32);
+
+	no_wake_gpios = devm_kzalloc(&pdev->dev, length * sizeof(uint32_t), GFP_KERNEL);
+	if (!no_wake_gpios)
+		return -ENOMEM;
+
+	for (i = 0; i < length; i++)
+		no_wake_gpios[i] = be32_to_cpu(prop[i]);
+
+	yupik_pinctrl.no_wake_gpios = no_wake_gpios;
+	yupik_pinctrl.n_no_wake_gpios = length;
+
+	pr_info("%s: %d", __func__, yupik_pinctrl.n_no_wake_gpios);
+
+	return 0;
+}
+#endif
+
 static int yupik_pinctrl_probe(struct platform_device *pdev)
 {
-	int ret;
+	int length, ret;
+
+	if (of_find_property(pdev->dev.of_node, "wakeup-disabled-gpios", &length)) {
+		ret = yupik_pinctrl_no_wake_probe(pdev);
+		if (ret)
+			return ret;
+	}
 
 	ret = msm_pinctrl_probe(pdev, &yupik_pinctrl);
 	if (ret)
 		return ret;
 
-	yupik_pinctrl_config_mpm_wake_disable_gpios();
+	//yupik_pinctrl_config_mpm_wake_disable_gpios();  // remove default code
 
 	return 0;
 }

@@ -16,7 +16,6 @@
  * @version:     DSI controller version.
  * @index:       DSI controller instance ID.
  * @phy_isolation_enabled:       DSI controller works isolated from phy.
- * @null_insertion_enabled:      DSI controller inserts null packet.
  *
  * This function setups the catalog information in the dsi_ctrl_hw object.
  *
@@ -24,7 +23,7 @@
  */
 int dsi_catalog_ctrl_setup(struct dsi_ctrl_hw *ctrl,
 		   enum dsi_ctrl_version version, u32 index,
-		   bool phy_isolation_enabled, bool null_insertion_enabled);
+		   bool phy_isolation_enabled);
 
 /**
  * dsi_catalog_phy_setup() - return catalog info for dsi phy hardware
@@ -107,6 +106,11 @@ int dsi_phy_hw_timing_val_v3_0(struct dsi_phy_per_lane_cfgs *timing_cfg,
 void dsi_phy_hw_v3_0_clamp_ctrl(struct dsi_phy_hw *phy, bool enable);
 int dsi_phy_hw_v3_0_lane_reset(struct dsi_phy_hw *phy);
 void dsi_phy_hw_v3_0_toggle_resync_fifo(struct dsi_phy_hw *phy);
+
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+void dsi_phy_hw_v4_0_store_str(struct dsi_phy_hw *phy, u32 *val);
+void dsi_phy_hw_v4_0_store_emphasis(struct dsi_phy_hw *phy, u32 *val);
+#endif
 
 /* Definitions for 7nm PHY hardware driver */
 void dsi_phy_hw_v4_0_enable(struct dsi_phy_hw *phy, struct dsi_phy_cfg *cfg);

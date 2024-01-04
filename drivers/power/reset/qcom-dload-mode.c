@@ -16,6 +16,10 @@
 #include <linux/qcom_scm.h>
 #include <soc/qcom/minidump.h>
 
+#if IS_ENABLED(CONFIG_SEC_DEBUG)
+#include <linux/sec_debug.h>
+#endif
+
 enum qcom_download_dest {
 	QCOM_DOWNLOAD_DEST_UNKNOWN = -1,
 	QCOM_DOWNLOAD_DEST_QPST = 0,
@@ -74,6 +78,18 @@ static void msm_enable_dump_mode(bool enable)
 	else
 		set_download_mode(QCOM_DOWNLOAD_NODUMP);
 }
+
+#if IS_ENABLED(CONFIG_SEC_DEBUG)
+void set_dload_mode(int on)
+{
+	if (on)
+		set_download_mode(QCOM_DOWNLOAD_FULLDUMP);
+	else
+		set_download_mode(QCOM_DOWNLOAD_NODUMP);
+
+	pr_err("set_dload_mode <%d> ( %lx )\n", on, CALLER_ADDR0);
+}
+#endif
 
 static void set_download_dest(struct qcom_dload *poweroff,
 			      enum qcom_download_dest dest)
@@ -258,10 +274,13 @@ static int qcom_dload_reboot(struct notifier_block *this, unsigned long event,
 	struct qcom_dload *poweroff = container_of(this, struct qcom_dload,
 						     reboot_nb);
 
+	pr_debug("%s : cmd : %s\n", __func__, cmd);		/* CONFIG_SEC_DEBUG */
+
 	/* Clean shutdown, disable dump mode to allow normal restart */
 	if (!poweroff->in_panic)
 		set_download_mode(QCOM_DOWNLOAD_NODUMP);
 
+#if !IS_ENABLED(CONFIG_SEC_DEBUG)
 	if (cmd) {
 		if (!strcmp(cmd, "edl")) {
 			early_pcie_init_enable ? set_download_mode(QCOM_EDLOAD_PCI_MODE)
@@ -270,9 +289,12 @@ static int qcom_dload_reboot(struct notifier_block *this, unsigned long event,
 		else if (!strcmp(cmd, "qcom_dload"))
 			msm_enable_dump_mode(true);
 	}
+#endif
 
 	if (current_download_mode != QCOM_DOWNLOAD_NODUMP)
 		reboot_mode = REBOOT_WARM;
+	else
+		qcom_scm_disable_sdi();
 
 	return NOTIFY_OK;
 }
@@ -372,9 +394,15 @@ static int qcom_dload_probe(struct platform_device *pdev)
 	store_kaslr_offset();
 	check_pci_edl(pdev->dev.of_node);
 
+
+#if IS_ENABLED(CONFIG_SEC_DEBUG)
+	enable_dump = true;
+	msm_enable_dump_mode(enable_dump);
+#else
 	msm_enable_dump_mode(enable_dump);
 	if (!enable_dump)
 		qcom_scm_disable_sdi();
+#endif
 
 	poweroff->panic_nb.notifier_call = qcom_dload_panic;
 	poweroff->panic_nb.priority = INT_MAX;

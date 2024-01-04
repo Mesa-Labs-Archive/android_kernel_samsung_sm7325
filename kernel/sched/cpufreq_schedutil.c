@@ -17,6 +17,10 @@
 
 #define IOWAIT_BOOST_MIN	(SCHED_CAPACITY_SCALE / 8)
 
+#ifdef CONFIG_SEC_PERF_MANAGER
+extern DEFINE_PER_CPU(unsigned long, fps_boosted_util);
+#endif
+
 struct sugov_tunables {
 	struct gov_attr_set	attr_set;
 	unsigned int		up_rate_limit_us;
@@ -424,12 +428,19 @@ static unsigned long sugov_get_util(struct sugov_cpu *sg_cpu)
 	struct rq *rq = cpu_rq(sg_cpu->cpu);
 	unsigned long max = arch_scale_cpu_capacity(sg_cpu->cpu);
 	unsigned long util;
+#ifdef CONFIG_SEC_PERF_MANAGER
+	unsigned long fps_util = per_cpu(fps_boosted_util, sg_cpu->cpu);
+#endif
 
 	sg_cpu->max = max;
 	sg_cpu->bw_dl = cpu_bw_dl(rq);
 
 #ifdef CONFIG_SCHED_WALT
 	util = cpu_util_freq_walt(sg_cpu->cpu, &sg_cpu->walt_load);
+
+#ifdef CONFIG_SEC_PERF_MANAGER
+	util = max(fps_util, util);
+#endif
 
 	return uclamp_rq_util_with(rq, util, NULL);
 #else

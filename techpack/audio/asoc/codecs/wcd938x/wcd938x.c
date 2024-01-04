@@ -293,6 +293,8 @@ static int wcd938x_init_reg(struct snd_soc_component *component)
 				WCD938X_DIGITAL_EFUSE_REG_30) & 0x07) << 1));
 	snd_soc_component_update_bits(component,
 				WCD938X_HPH_SURGE_HPHLR_SURGE_EN, 0xC0, 0xC0);
+	snd_soc_component_update_bits(component,
+				WCD938X_MICB2_TEST_CTL_3, 0xFF, 0xA4);
 
 	return 0;
 }
@@ -2030,7 +2032,7 @@ int wcd938x_micbias_control(struct snd_soc_component *component,
 						pre_off_event,
 						&wcd938x->mbhc->wcd_mbhc);
 			snd_soc_component_update_bits(component, micb_reg,
-							0xC0, 0x00);
+							0xC0, 0xC0);
 			if (post_off_event && wcd938x->mbhc)
 				blocking_notifier_call_chain(
 						&wcd938x->mbhc->notifier,
@@ -2980,6 +2982,7 @@ static int wcd938x_get_micbias(struct snd_kcontrol *kcontrol,
 		    kcontrol->private_value)->shift;
 
 	ucontrol->value.integer.value[0] = wcd938x->micb_enabled[micb_num - 1];
+	pr_err("%s:: get_micbias[%d] = %d\n", __func__, micb_num, wcd938x->micb_enabled[micb_num - 1]);
 	return 0;
 }
 
@@ -3008,6 +3011,7 @@ static int wcd938x_set_micbias(struct snd_kcontrol *kcontrol,
 	}
 
 	wcd938x->micb_enabled[micb_num - 1] = enable;
+	pr_err("%s:: set_micbias[%d] = %d\n", __func__, micb_num, wcd938x->micb_enabled[micb_num - 1]);
 	return ret;
 }
 
@@ -4149,6 +4153,21 @@ static int wcd938x_reset_low(struct device *dev)
 struct wcd938x_pdata *wcd938x_populate_dt_data(struct device *dev)
 {
 	struct wcd938x_pdata *pdata = NULL;
+#ifdef CONFIG_SND_SOC_IMPED_SENSING
+	int rc = 0;
+	int i;
+	struct of_phandle_args imp_list;
+	struct wcd938x_gain_table default_table[MAX_IMPEDANCE_TABLE] = {
+		{	 0, 	  0, 6},
+		{	 1, 	 13, 0},
+		{	14, 	 25, 3},
+		{	26, 	 42, 4},
+		{	43, 	100, 5},
+		{  101, 	200, 7},
+		{  201,    1000, 8},
+		{ 1001, INT_MAX, 6},
+};
+#endif
 
 	pdata = devm_kzalloc(dev, sizeof(struct wcd938x_pdata),
 				GFP_KERNEL);
@@ -4178,6 +4197,26 @@ struct wcd938x_pdata *wcd938x_populate_dt_data(struct device *dev)
 	pdata->tx_slave = of_parse_phandle(dev->of_node, "qcom,tx-slave", 0);
 
 	wcd938x_dt_parse_micbias_info(dev, &pdata->micbias);
+
+#ifdef CONFIG_SND_SOC_IMPED_SENSING
+	for (i = 0; i < ARRAY_SIZE(pdata->imp_table); i++) {
+		rc = of_parse_phandle_with_args(dev->of_node,
+			"imp-table", "#list-imp-cells", i, &imp_list);
+		if (rc < 0) {
+			pdata->imp_table[i].min = default_table[i].min;
+			pdata->imp_table[i].max = default_table[i].max;
+			pdata->imp_table[i].gain = default_table[i].gain;
+		} else {
+			pdata->imp_table[i].min = imp_list.args[0];
+			pdata->imp_table[i].max = imp_list.args[1];
+			pdata->imp_table[i].gain = imp_list.args[2];
+		}
+		dev_info(dev, "impedance gain table %d, %d, %d\n",
+			pdata->imp_table[i].min,
+			pdata->imp_table[i].max,
+			pdata->imp_table[i].gain);
+	}
+#endif
 
 	return pdata;
 }

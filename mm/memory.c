@@ -82,6 +82,10 @@
 #include <asm/tlbflush.h>
 #include <asm/pgtable.h>
 
+#ifdef CONFIG_PAGE_BOOST_RECORDING
+#include <linux/io_record.h>
+#endif
+
 #include "internal.h"
 
 #if defined(LAST_CPUPID_NOT_IN_PAGE_FLAGS) && !defined(CONFIG_COMPILE_TEST)
@@ -3737,7 +3741,9 @@ vm_fault_t finish_fault(struct vm_fault *vmf)
  * there is no much gain with fault_around.
  */
 static unsigned long fault_around_bytes __read_mostly =
-#ifndef __HAVE_ARCH_PTEP_SET_ACCESS_FLAGS
+#if defined(CONFIG_FAULT_AROUND_4KB)
+	rounddown_pow_of_two(4096);
+#elif !defined(__HAVE_ARCH_PTEP_SET_ACCESS_FLAGS)
 	PAGE_SIZE;
 #else
 	rounddown_pow_of_two(65536);
@@ -3870,6 +3876,10 @@ static vm_fault_t do_read_fault(struct vm_fault *vmf)
 		ret = do_fault_around(vmf);
 		if (ret)
 			return ret;
+#ifdef CONFIG_PAGE_BOOST_RECORDING
+	} else if (vma->vm_ops->map_pages && fault_around_bytes >> PAGE_SHIFT == 1) {
+		record_io_info(vma->vm_file, vmf->pgoff, 1);
+#endif
 	}
 
 	ret = __do_fault(vmf);

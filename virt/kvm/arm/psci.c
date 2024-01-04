@@ -503,7 +503,7 @@ static int get_kernel_wa_level(u64 regid)
 		default:
 			break;
 		}
-		return KVM_REG_ARM_SMCCC_ARCH_WORKAROUND_2_UNKNOWN;
+	return KVM_REG_ARM_SMCCC_ARCH_WORKAROUND_2_UNKNOWN;
 	case KVM_REG_ARM_SMCCC_ARCH_WORKAROUND_3:
 		switch (kvm_arm_get_spectre_bhb_state()) {
 		case SPECTRE_VULNERABLE:

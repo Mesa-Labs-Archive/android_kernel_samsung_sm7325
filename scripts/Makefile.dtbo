@@ -8,6 +8,10 @@ __dtbo     := $(addprefix $(obj)/,$(__dtbo))
 dtbo-base	:= $(addprefix $(obj)/,$(dtbo-base))
 dtbo	:= $(addprefix $(obj)/,$(dtbo))
 
+# Usage: ufdt_apply_overlay <base_file> <overlay_file> <out_file>
+# $(dot-target).$(patsubst ../vendor/qcom/%,%,$(patsubst $(obj)/%.dtb,%,$(m)) ).tmp;))\
+#
+
 ifneq ($(DTC_OVERLAY_TEST_EXT),)
 DTC_OVERLAY_TEST = $(DTC_OVERLAY_TEST_EXT)
 quiet_cmd_dtbo_verify	= VERIFY  $@
@@ -15,7 +19,7 @@ cmd_dtbo_verify = $(foreach m,\
 	$(addprefix $(obj)/,$($(@F)-base)),\
 		$(if $(m),\
 			$(DTC_OVERLAY_TEST) $(m) $@ \
-			$(dot-target).$(patsubst $(obj)/%.dtb,%,$(m)).tmp;))\
+			$(dot-target).$(patsubst ../../../vendor/qcom/%,%,$(patsubst $(obj)/%.dtb,%,$(m)) ).tmp;))\
 			true
 else
 cmd_dtbo_verify = true

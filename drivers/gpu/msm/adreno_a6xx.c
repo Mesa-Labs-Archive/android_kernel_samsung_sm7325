@@ -2631,7 +2631,6 @@ static void a619_holi_regulator_disable_poll(struct kgsl_device *device)
 	kgsl_regulator_set_voltage(device->dev, pwr->gx_gdsc_parent, 0);
 
 	a6xx_cx_regulator_disable_wait(pwr->cx_gdsc, device, 200);
-
 }
 
 const struct adreno_gpudev adreno_a6xx_gpudev = {

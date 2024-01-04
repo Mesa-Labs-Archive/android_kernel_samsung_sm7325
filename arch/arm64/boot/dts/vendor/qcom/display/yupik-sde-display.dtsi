@@ -50,8 +50,6 @@
 	qcom,panel-te-source = <0>;
 
 	vddio-supply = <&L8C>;
-	lab-supply = <&lcdb_ldo_vreg>;
-	ibb-supply = <&lcdb_ncp_vreg>;
 };
 
 &mdss_mdp {

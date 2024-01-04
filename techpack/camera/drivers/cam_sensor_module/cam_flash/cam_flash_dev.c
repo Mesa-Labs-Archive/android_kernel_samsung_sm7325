@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2017-2020, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/module.h>
@@ -9,6 +9,11 @@
 #include "cam_flash_core.h"
 #include "cam_common_util.h"
 #include "camera_main.h"
+#if IS_REACHABLE(CONFIG_LEDS_S2MPB02) || defined(CONFIG_LEDS_KTD2692)
+#include <cam_sensor_cmn_header.h>
+#include <cam_sensor_util.h>
+struct msm_pinctrl_info flash_pctrl;
+#endif
 
 static int32_t cam_flash_driver_cmd(struct cam_flash_ctrl *fctrl,
 		void *arg, struct cam_flash_private_soc *soc_private)
@@ -416,7 +421,7 @@ static int cam_flash_component_bind(struct device *dev,
 	struct cam_flash_ctrl *fctrl = NULL;
 	struct device_node *of_parent = NULL;
 	struct platform_device *pdev = to_platform_device(dev);
-	struct cam_hw_soc_info *soc_info = NULL;
+//	struct cam_hw_soc_info *soc_info = NULL;
 
 	CAM_DBG(CAM_FLASH, "Binding flash component");
 	if (!pdev->dev.of_node) {
@@ -473,7 +478,7 @@ static int cam_flash_component_bind(struct device *dev,
 		fctrl->io_master_info.cci_client->cci_device = fctrl->cci_num;
 		CAM_DBG(CAM_FLASH, "cci-index %d", fctrl->cci_num, rc);
 
-		soc_info = &fctrl->soc_info;
+	/*	soc_info = &fctrl->soc_info;
 		rc = cam_sensor_util_init_gpio_pin_tbl(soc_info,
 			&fctrl->power_info.gpio_num_info);
 		if ((rc < 0) || (!fctrl->power_info.gpio_num_info)) {
@@ -484,7 +489,7 @@ static int cam_flash_component_bind(struct device *dev,
 		if (rc < 0) {
 			CAM_ERR(CAM_FLASH, "regulator power up for flash failed %d",  rc);
 			return rc;
-		}
+		} */
 
 		fctrl->i2c_data.per_frame =
 			kzalloc(sizeof(struct i2c_settings_array) *
@@ -531,6 +536,17 @@ static int cam_flash_component_bind(struct device *dev,
 	fctrl->last_flush_req = 0;
 
 	mutex_init(&(fctrl->flash_mutex));
+
+#if IS_REACHABLE(CONFIG_LEDS_S2MPB02) || defined(CONFIG_LEDS_KTD2692)
+	if (msm_camera_pinctrl_init(&flash_pctrl, &pdev->dev) >= 0) {
+		// make pin state to suspend
+		rc = pinctrl_select_state(flash_pctrl.pinctrl, flash_pctrl.gpio_state_suspend);
+		if (rc < 0) {
+			CAM_ERR(CAM_FLASH, "Cannot set pin to suspend state %d", rc);
+			rc = 0;
+		}
+	}
+#endif
 
 	fctrl->flash_state = CAM_FLASH_STATE_INIT;
 	CAM_DBG(CAM_FLASH, "Component bound successfully");

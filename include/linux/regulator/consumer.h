@@ -248,6 +248,10 @@ int regulator_set_voltage_time(struct regulator *regulator,
 			       int old_uV, int new_uV);
 int regulator_get_voltage(struct regulator *regulator);
 int regulator_sync_voltage(struct regulator *regulator);
+#ifdef CONFIG_SEC_PM
+int regulator_set_short_detection(struct regulator *regulator,
+			       bool enable, int lv_uA);
+#endif /* CONFIG_SEC_PM */
 int regulator_set_current_limit(struct regulator *regulator,
 			       int min_uA, int max_uA);
 int regulator_get_current_limit(struct regulator *regulator);
@@ -486,6 +490,14 @@ static inline unsigned int regulator_get_linear_step(struct regulator *regulator
 {
 	return 0;
 }
+
+#ifdef CONFIG_SEC_PM
+static inline int regulator_set_short_protection(struct regulator *regulator,
+					     bool enable, int lv_uA)
+{
+	return 0;
+}
+#endif
 
 static inline int regulator_set_current_limit(struct regulator *regulator,
 					     int min_uA, int max_uA)

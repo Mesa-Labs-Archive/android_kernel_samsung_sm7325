@@ -20,6 +20,10 @@
 #include <linux/vmalloc.h>
 #include <asm/page.h>
 
+#if IS_ENABLED(CONFIG_PSTORE_PMSG_SSPLOG)
+#include "internal.h"
+#endif
+
 /**
  * struct persistent_ram_buffer - persistent circular RAM buffer
  *
@@ -288,6 +292,12 @@ static int notrace persistent_ram_update_user(struct persistent_ram_zone *prz,
 	struct persistent_ram_buffer *buffer = prz->buffer;
 	int ret = unlikely(__copy_from_user(buffer->data + start, s, count)) ?
 		-EFAULT : 0;
+
+#if IS_ENABLED(CONFIG_PSTORE_PMSG_SSPLOG)
+	if (!ret)
+		ss_hook_pmsg(buffer->data + start, count);
+#endif
+
 	persistent_ram_update_ecc(prz, start, count);
 	return ret;
 }
@@ -513,6 +523,7 @@ static int persistent_ram_post_init(struct persistent_ram_zone *prz, u32 sig,
 	if (prz->buffer->sig == sig) {
 		if (buffer_size(prz) == 0 && buffer_start(prz) == 0) {
 			pr_debug("found existing empty buffer\n");
+			persistent_ram_zap(prz);	// CONFIG_SEC_DEBUG
 			return 0;
 		}
 

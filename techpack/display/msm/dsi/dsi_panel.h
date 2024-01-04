@@ -161,6 +161,9 @@ enum esd_check_status_mode {
 	ESD_MODE_PANEL_TE,
 	ESD_MODE_SW_SIM_SUCCESS,
 	ESD_MODE_SW_SIM_FAILURE,
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+	ESD_MODE_PANEL_IRQ,
+#endif
 	ESD_MODE_MAX
 };
 
@@ -267,6 +270,15 @@ struct dsi_panel {
 	u32 tlmm_gpio_count;
 
 	struct dsi_panel_ops panel_ops;
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+	void *panel_private;
+	struct device_node *self_display_of_node;
+	struct dsi_parser_utils self_display_utils;
+	struct device_node *mafpc_of_node;
+	struct dsi_parser_utils mafpc_utils;
+	struct device_node *test_mode_of_node;
+	struct dsi_parser_utils test_mode_utils;
+#endif
 };
 
 static inline bool dsi_panel_ulps_feature_enabled(struct dsi_panel *panel)
@@ -402,4 +414,18 @@ int dsi_panel_create_cmd_packets(const char *data, u32 length, u32 count,
 void dsi_panel_destroy_cmd_packets(struct dsi_panel_cmd_set *set);
 
 void dsi_panel_dealloc_cmd_packets(struct dsi_panel_cmd_set *set);
+
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+#define SS_CMD_PROP_STR_LEN (100)
+
+int dsi_panel_set_pinctrl_state(struct dsi_panel *panel, bool enable);
+int dsi_panel_power_on(struct dsi_panel *panel);
+int dsi_panel_power_off(struct dsi_panel *panel);
+int dsi_panel_tx_cmd_set(struct dsi_panel *panel, int type);
+int __ss_dsi_panel_parse_cmd_sets(struct dsi_panel_cmd_set *cmd,
+					int type, struct dsi_parser_utils *utils,
+					char (*ss_cmd_set_prop)[SS_CMD_PROP_STR_LEN]);
+int dsi_panel_boost_regulator(struct dsi_panel *panel, bool enable);
+#endif
+
 #endif /* _DSI_PANEL_H_ */

@@ -26,6 +26,19 @@
 #include "ufs_quirks.h"
 #include "ufshcd-crypto-qti.h"
 
+#include <linux/sec_class.h>
+#include <linux/sec_debug.h>
+
+#if IS_ENABLED(CONFIG_SEC_ABC)
+#include <linux/sti/abc_common.h>
+#endif
+
+#if IS_ENABLED(CONFIG_SEC_UFS_WB_FEATURE)
+#include <asm/unaligned.h>
+#define CREATE_TRACE_POINTS
+#include <trace/events/marker.h>
+#endif
+
 #define UFS_QCOM_DEFAULT_DBG_PRINT_EN	\
 	(UFS_QCOM_DBG_PRINT_REGS_EN | UFS_QCOM_DBG_PRINT_TEST_BUS_EN)
 
@@ -40,6 +53,14 @@
 
 #define	ANDROID_BOOT_DEV_MAX	30
 static char android_boot_dev[ANDROID_BOOT_DEV_MAX];
+
+/* UFSHCD states */
+enum {
+	UFSHCD_STATE_RESET,
+	UFSHCD_STATE_ERROR,
+	UFSHCD_STATE_OPERATIONAL,
+	UFSHCD_STATE_EH_SCHEDULED,
+};
 
 enum {
 	TSTBUS_UAWM,
@@ -86,6 +107,568 @@ static int ufs_qcom_update_qos_constraints(struct qos_cpu_group *qcg,
 					   enum constraint type);
 static int ufs_qcom_unvote_qos_all(struct ufs_hba *hba);
 static void ufs_qcom_parse_g4_workaround_flag(struct ufs_qcom_host *host);
+
+/* sec special features */
+static struct ufs_vendor_dev_info ufs_vdi;
+static void ufs_set_sec_unique_number(struct ufs_hba *hba, u8 *desc_buf);
+static void ufs_get_health_desc(struct ufs_hba *hba);
+
+#if IS_ENABLED(CONFIG_SEC_UFS_WB_FEATURE)
+
+static void ufs_sec_wb_init_sysfs(struct ufs_hba *hba);
+
+#define set_wb_state(wb, s) \
+	({(wb)->state = (s); (wb)->state_ts = jiffies; })
+
+#define SEC_WB_may_on(wb, write_blocks, write_rqs) \
+	((write_blocks) > ((wb)->wb_off ? (wb)->lp_up_threshold_block : (wb)->up_threshold_block) || \
+	 (write_rqs) > ((wb)->wb_off ? (wb)->lp_up_threshold_rqs : (wb)->up_threshold_rqs))
+#define SEC_WB_may_off(wb, write_blocks, write_rqs) \
+	((write_blocks) < ((wb)->wb_off ? (wb)->lp_down_threshold_block : (wb)->down_threshold_block) && \
+	 (write_rqs) < ((wb)->wb_off ? (wb)->lp_down_threshold_rqs : (wb)->down_threshold_rqs))
+#define SEC_WB_check_on_delay(wb)	\
+	(time_after_eq(jiffies,		\
+	 (wb)->state_ts + ((wb)->wb_off ? (wb)->lp_on_delay : (wb)->on_delay)))
+#define SEC_WB_check_off_delay(wb)	\
+	(time_after_eq(jiffies,		\
+	 (wb)->state_ts + ((wb)->wb_off ? (wb)->lp_off_delay : (wb)->off_delay)))
+
+static void ufs_sec_wb_update_summary_stats(struct SEC_WB_info *wb_info)
+{
+	int idx;
+
+	if (unlikely(!wb_info->wb_curr_issued_block))
+		return;
+
+	if (wb_info->wb_curr_issued_max_block < wb_info->wb_curr_issued_block)
+		wb_info->wb_curr_issued_max_block = wb_info->wb_curr_issued_block;
+	if (wb_info->wb_curr_issued_min_block > wb_info->wb_curr_issued_block)
+		wb_info->wb_curr_issued_min_block = wb_info->wb_curr_issued_block;
+
+	/*
+	 * count up index
+	 * 0 : wb_curr_issued_block < 4GB
+	 * 1 : 4GB <= wb_curr_issued_block < 8GB
+	 * 2 : 8GB <= wb_curr_issued_block < 16GB
+	 * 3 : 16GB <= wb_curr_issued_block
+	 */
+	idx = fls(wb_info->wb_curr_issued_block >> 20);
+	idx = (idx < 4) ? idx : 3;
+	wb_info->wb_issued_size_cnt[idx]++;
+
+	/*
+	 * wb_curr_issued_block : per 4KB
+	 * wb_total_issued_mb : MB
+	 */
+	wb_info->wb_total_issued_mb += (wb_info->wb_curr_issued_block >> 8);
+
+	wb_info->wb_curr_issued_block = 0;
+}
+
+static void ufs_sec_wb_update_state(struct ufs_qcom_host *host)
+{
+	struct SEC_WB_info *wb_info = &host->sec_wb_info;
+	struct ufs_hba *hba = host->hba;
+
+	if (hba->pm_op_in_progress) {
+		pr_err("%s: pm_op_in_progress.\n", __func__);
+		return;
+	}
+
+	if (!ufs_sec_is_wb_allowed(host))
+		return;
+
+	trace_mark_count('C', "UFS-WB", "sectors", wb_info->wb_current_block, 0, 0, 0, 1);
+	trace_mark_count('C', "UFS-WB", "rqs", wb_info->wb_current_rqs, 0, 0, 0, 1);
+
+	switch (wb_info->state) {
+	case WB_OFF:
+		if (SEC_WB_may_on(wb_info, wb_info->wb_current_block, wb_info->wb_current_rqs)) {
+			set_wb_state(wb_info, WB_ON_READY);
+			trace_mark_count('C', "UFS-WB", "state", wb_info->state, 0, 0, 0, 1);
+		}
+		break;
+	case WB_ON_READY:
+		if (SEC_WB_may_off(wb_info, wb_info->wb_current_block, wb_info->wb_current_rqs)) {
+			set_wb_state(wb_info, WB_OFF);
+			trace_mark_count('C', "UFS-WB", "state", wb_info->state, 0, 0, 0, 1);
+		} else if (SEC_WB_check_on_delay(wb_info)) {
+			set_wb_state(wb_info, WB_ON);
+			trace_mark_count('C', "UFS-WB", "state", wb_info->state, 0, 0, 0, 1);
+			// queue work to WB on
+			queue_work(host->SEC_WB_workq, &host->SEC_WB_on_work);
+		}
+		break;
+	case WB_OFF_READY:
+		if (SEC_WB_may_on(wb_info, wb_info->wb_current_block, wb_info->wb_current_rqs)) {
+			set_wb_state(wb_info, WB_ON);
+			trace_mark_count('C', "UFS-WB", "state", wb_info->state, 0, 0, 0, 1);
+		} else if (SEC_WB_check_off_delay(wb_info)) {
+			set_wb_state(wb_info, WB_OFF);
+			trace_mark_count('C', "UFS-WB", "state", wb_info->state, 0, 0, 0, 1);
+			// queue work to WB off
+			queue_work(host->SEC_WB_workq, &host->SEC_WB_off_work);
+			ufs_sec_wb_update_summary_stats(wb_info);
+		}
+		break;
+	case WB_ON:
+		if (SEC_WB_may_off(wb_info, wb_info->wb_current_block, wb_info->wb_current_rqs)) {
+			set_wb_state(wb_info, WB_OFF_READY);
+			trace_mark_count('C', "UFS-WB", "state", wb_info->state, 0, 0, 0, 1);
+		}
+		break;
+	default:
+		WARN_ON(1);
+		break;
+	}
+}
+
+static int ufs_sec_wb_ctrl(struct ufs_hba *hba, bool enable, bool force)
+{
+	struct ufs_qcom_host *host = ufshcd_get_variant(hba);
+	struct SEC_WB_info *wb_info = &host->sec_wb_info;
+	int ret = 0;
+	u8 index;
+	enum query_opcode opcode;
+	int retry = 3;
+	bool need_runtime_pm = false;
+
+	/*
+	 * Do not issue query, return immediately and set prev. state
+	 * when workqueue run in suspend/resume
+	 */
+	if (hba->pm_op_in_progress) {
+		pr_err("%s: pm_op_in_progress.\n", __func__);
+		return -EBUSY;
+	}
+
+	/*
+	 * Return error when workqueue run in WB disabled state
+	 */
+	if (!ufs_sec_is_wb_allowed(host) && !force) {
+		pr_err("%s: not allowed.\n", __func__);
+		return 0;
+	}
+
+	if (!(enable ^ hba->wb_enabled)) {
+		pr_info("%s: write booster is already %s\n",
+				__func__, enable ? "enabled" : "disabled");
+		return 0;
+	}
+
+	if (enable)
+		opcode = UPIU_QUERY_OPCODE_SET_FLAG;
+	else
+		opcode = UPIU_QUERY_OPCODE_CLEAR_FLAG;
+
+	index = ufshcd_wb_get_query_index(hba);
+
+	if (pm_runtime_status_suspended(hba->dev)) {
+		pm_runtime_get_sync(hba->dev);
+		need_runtime_pm = true;
+	}
+
+	do {
+		ret = ufshcd_query_flag(hba, opcode,
+				QUERY_FLAG_IDN_WB_EN, index, NULL);
+		retry--;
+	} while (ret && retry);
+
+	if (need_runtime_pm)
+		pm_runtime_put(hba->dev);
+
+	if (!ret) {
+		hba->wb_enabled = enable;
+		pr_info("%s: SEC write booster %s, current WB state is %d.\n",
+				__func__, enable ? "enable" : "disable",
+				wb_info->state);
+	}
+
+	return ret;
+}
+
+static void ufs_sec_wb_on_work_func(struct work_struct *work)
+{
+	struct ufs_qcom_host *host = container_of(work, struct ufs_qcom_host,
+			SEC_WB_on_work);
+	struct ufs_hba *hba = host->hba;
+	struct SEC_WB_info *wb_info = &host->sec_wb_info;
+	int ret = 0;
+
+	ret = ufs_sec_wb_ctrl(hba, true, false);
+
+	/* error case, except pm_op_in_progress and no supports */
+	if (ret) {
+		unsigned long flags;
+
+		spin_lock_irqsave(hba->host->host_lock, flags);
+
+		dev_err(hba->dev, "%s: write booster on failed %d, now WB is %s, state is %d.\n", __func__,
+				ret, hba->wb_enabled ? "on" : "off",
+				wb_info->state);
+
+		/*
+		 * check only WB_ON state
+		 *   WB_OFF_READY : WB may off after this condition
+		 *   WB_OFF or WB_ON_READY : in WB_OFF, off_work should be queued
+		 */
+		if (wb_info->state == WB_ON) {
+			/* set WB state to WB_ON_READY to trigger WB ON again */
+			set_wb_state(wb_info, WB_ON_READY);
+			trace_mark_count('C', "UFS-WB", "state", wb_info->state, 0, 0, 0, 1);
+		}
+
+		spin_unlock_irqrestore(hba->host->host_lock, flags);
+	}
+
+	dev_dbg(hba->dev, "%s: WB %s, count %d, ret %d.\n", __func__,
+			hba->wb_enabled ? "on" : "off",
+			wb_info->wb_current_rqs, ret);
+}
+
+static void ufs_sec_wb_off_work_func(struct work_struct *work)
+{
+	struct ufs_qcom_host *host = container_of(work, struct ufs_qcom_host,
+			SEC_WB_off_work);
+	struct ufs_hba *hba = host->hba;
+	struct SEC_WB_info *wb_info = &host->sec_wb_info;
+	int ret = 0;
+
+	ret = ufs_sec_wb_ctrl(hba, false, false);
+
+	/* error case, except pm_op_in_progress and no supports */
+	if (ret) {
+		unsigned long flags;
+
+		spin_lock_irqsave(hba->host->host_lock, flags);
+
+		dev_err(hba->dev, "%s: write booster off failed %d, now WB is %s, state is %d.\n", __func__,
+				ret, hba->wb_enabled ? "on" : "off",
+				wb_info->state);
+
+		/*
+		 * check only WB_OFF state
+		 *   WB_ON_READY : WB may on after this condition
+		 *   WB_ON or WB_OFF_READY : in WB_ON, on_work should be queued
+		 */
+		if (wb_info->state == WB_OFF) {
+			/* set WB state to WB_OFF_READY to trigger WB OFF again */
+			set_wb_state(wb_info, WB_OFF_READY);
+			trace_mark_count('C', "UFS-WB", "state", wb_info->state, 0, 0, 0, 1);
+		}
+
+		spin_unlock_irqrestore(hba->host->host_lock, flags);
+	} else if (ufs_vdi.lifetime >= (u8)wb_info->wb_disable_threshold_lt) {
+		pr_err("%s: disable WB by LT %u.\n", __func__, ufs_vdi.lifetime);
+		wb_info->wb_support = false;
+	}
+
+	dev_dbg(hba->dev, "%s: WB %s, count %d, ret %d.\n", __func__,
+			hba->wb_enabled ? "on" : "off",
+			wb_info->wb_current_rqs, ret);
+}
+
+static bool ufs_sec_parse_wb_info(struct ufs_qcom_host *host)
+{
+	struct SEC_WB_info *wb_info = &host->sec_wb_info;
+	struct device_node *node = host->hba->dev->of_node;
+	int temp_delay_ms_value;
+
+	wb_info->wb_support = of_property_read_bool(node, "sec,wb-enable");
+	if (!wb_info->wb_support)
+		return false;
+
+	if (of_property_read_u32(node, "sec,wb-up-threshold-block", &wb_info->up_threshold_block))
+		wb_info->up_threshold_block = 3072;
+
+	if (of_property_read_u32(node, "sec,wb-up-threshold-rqs", &wb_info->up_threshold_rqs))
+		wb_info->up_threshold_rqs = 30;
+
+	if (of_property_read_u32(node, "sec,wb-down-threshold-block", &wb_info->down_threshold_block))
+		wb_info->down_threshold_block = 1536;
+
+	if (of_property_read_u32(node, "sec,wb-down-threshold-rqs", &wb_info->down_threshold_rqs))
+		wb_info->down_threshold_rqs = 25;
+
+	if (of_property_read_u32(node, "sec,wb-disable-threshold-lt", &wb_info->wb_disable_threshold_lt))
+		wb_info->wb_disable_threshold_lt = 9;
+
+	if (of_property_read_u32(node, "sec,wb-on-delay-ms", &temp_delay_ms_value))
+		wb_info->on_delay = msecs_to_jiffies(92);
+	else
+		wb_info->on_delay = msecs_to_jiffies(temp_delay_ms_value);
+
+	if (of_property_read_u32(node, "sec,wb-off-delay-ms", &temp_delay_ms_value))
+		wb_info->off_delay = msecs_to_jiffies(4500);
+	else
+		wb_info->off_delay = msecs_to_jiffies(temp_delay_ms_value);
+
+	wb_info->wb_curr_issued_block = 0;
+	wb_info->wb_total_issued_mb = 0;
+	wb_info->wb_issued_size_cnt[0] = 0;
+	wb_info->wb_issued_size_cnt[1] = 0;
+	wb_info->wb_issued_size_cnt[2] = 0;
+	wb_info->wb_issued_size_cnt[3] = 0;
+
+	/* default values will be used when (wb_off == true) */
+	wb_info->lp_up_threshold_block = 3072;		/* 12MB */
+	wb_info->lp_up_threshold_rqs = 30;
+	wb_info->lp_down_threshold_block = 3072;
+	wb_info->lp_down_threshold_rqs = 30;
+	wb_info->lp_on_delay = msecs_to_jiffies(200);
+	wb_info->lp_off_delay = msecs_to_jiffies(0);
+        
+	return true;
+}
+
+static void ufs_sec_wb_toggle_flush_during_h8(struct ufs_hba *hba, bool set)
+{
+	struct ufs_qcom_host *host = ufshcd_get_variant(hba);
+	struct SEC_WB_info *wb_info = &host->sec_wb_info;
+	int val;
+	u8 index;
+	int err = 0;
+	int retry = 3;
+
+	if (!(wb_info->wb_setup_done && wb_info->wb_support))
+		return;
+
+	if (set)
+		val = UPIU_QUERY_OPCODE_SET_FLAG;
+	else
+		val = UPIU_QUERY_OPCODE_CLEAR_FLAG;
+
+	/* ufshcd_wb_toggle_flush_during_h8 */
+	index = ufshcd_wb_get_query_index(hba);
+
+	do {
+		err = ufshcd_query_flag(hba, val,
+				QUERY_FLAG_IDN_WB_BUFF_FLUSH_DURING_HIBERN8,
+				index, NULL);
+		retry--;
+	} while (err && retry);
+
+	dev_info(hba->dev, "%s: %s WB flush during H8 is %s.\n", __func__,
+			set ? "set" : "clear",
+			err ? "failed" : "done");
+}
+
+static void ufs_sec_wb_config(struct ufs_hba *hba, bool set)
+{
+	struct ufs_qcom_host *host = ufshcd_get_variant(hba);
+	struct SEC_WB_info *wb_info = &host->sec_wb_info;
+
+	if (!ufs_sec_is_wb_allowed(host))
+		return;
+
+	set_wb_state(wb_info, WB_OFF);
+	trace_mark_count('C', "UFS-WB", "state", wb_info->state, 0, 0, 0, 1);
+
+	if (ufs_vdi.lifetime >= (u8)wb_info->wb_disable_threshold_lt)
+		goto wb_disabled;
+
+	/* reset wb disable count and enable wb */
+	atomic_set(&wb_info->wb_off_cnt, 0);
+	wb_info->wb_off = false;
+
+	ufs_sec_wb_toggle_flush_during_h8(hba, set);
+
+	return;
+wb_disabled:
+	wb_info->wb_support = false;
+}
+
+static void ufs_sec_wb_probe(struct ufs_hba *hba, u8 *desc_buf)
+{
+	struct ufs_dev_info *dev_info = &hba->dev_info;
+	struct ufs_qcom_host *host = ufshcd_get_variant(hba);
+	struct SEC_WB_info *wb_info = &host->sec_wb_info;
+	u8 lun;
+	u32 d_lu_wb_buf_alloc = 0;
+	int err = 0;
+
+	if (!ufs_sec_is_wb_allowed(host))
+		return;
+
+	if (wb_info->wb_setup_done)
+		return;
+
+	if (hba->desc_size.dev_desc < DEVICE_DESC_PARAM_EXT_UFS_FEATURE_SUP + 4)
+		goto wb_disabled;
+
+	dev_info->d_ext_ufs_feature_sup =
+		get_unaligned_be32(desc_buf +
+				   DEVICE_DESC_PARAM_EXT_UFS_FEATURE_SUP);
+
+	if (!(dev_info->d_ext_ufs_feature_sup & UFS_DEV_WRITE_BOOSTER_SUP))
+		goto wb_disabled;
+
+	/*
+	 * WB may be supported but not configured while provisioning.
+	 * The spec says, in dedicated wb buffer mode,
+	 * a max of 1 lun would have wb buffer configured.
+	 * Now only shared buffer mode is supported.
+	 */
+	dev_info->b_wb_buffer_type =
+		desc_buf[DEVICE_DESC_PARAM_WB_TYPE];
+
+	dev_info->b_presrv_uspc_en =
+		desc_buf[DEVICE_DESC_PARAM_WB_PRESRV_USRSPC_EN];
+
+	if (dev_info->b_wb_buffer_type == WB_BUF_MODE_SHARED &&
+			(hba->dev_info.wspecversion >= 0x310 ||
+			 hba->dev_info.wspecversion == 0x220)) {
+		dev_info->d_wb_alloc_units =
+		get_unaligned_be32(desc_buf +
+				   DEVICE_DESC_PARAM_WB_SHARED_ALLOC_UNITS);
+		if (!dev_info->d_wb_alloc_units)
+			goto wb_disabled;
+	} else {
+		int buf_len;
+		u8 *desc_buf_temp;
+
+		buf_len = hba->desc_size.unit_desc;
+
+		desc_buf_temp = kmalloc(buf_len, GFP_KERNEL);
+		if (!desc_buf_temp)
+			goto wb_disabled;
+
+		for (lun = 0; lun < UFS_UPIU_MAX_WB_LUN_ID; lun++) {
+			d_lu_wb_buf_alloc = 0;
+			err = ufshcd_query_descriptor_retry(hba, UPIU_QUERY_OPCODE_READ_DESC,
+					QUERY_DESC_IDN_UNIT, lun, 0,
+					desc_buf_temp, &buf_len);
+			if (err) {
+				kfree(desc_buf_temp);
+				goto wb_disabled;
+			}
+
+			memcpy((u8 *)&d_lu_wb_buf_alloc,
+					&desc_buf_temp[UNIT_DESC_PARAM_WB_BUF_ALLOC_UNITS],
+					sizeof(d_lu_wb_buf_alloc));
+			if (d_lu_wb_buf_alloc) {
+				dev_info->wb_dedicated_lu = lun;
+				break;
+			}
+		}
+		kfree(desc_buf_temp);
+
+		if (!d_lu_wb_buf_alloc)
+			goto wb_disabled;
+	}
+
+	dev_info(hba->dev, "%s: SEC WB is enabled. type=%x, size=%u.\n", __func__,
+			dev_info->b_wb_buffer_type, d_lu_wb_buf_alloc);
+
+	wb_info->wb_setup_done = true;
+
+	/* create WB sysfs-nodes */
+	ufs_sec_wb_init_sysfs(hba);
+
+	return;
+wb_disabled:
+	wb_info->wb_support = false;
+}
+
+static void ufs_qcom_setup_xfer_req(struct ufs_hba *hba, int tag, bool is_scsi_cmd)
+{
+	struct ufshcd_lrb *lrbp;
+	struct scsi_cmnd *cmd;
+	struct ufs_qcom_host *host = ufshcd_get_variant(hba);
+	struct SEC_WB_info *wb_info = &host->sec_wb_info;
+
+	if (!ufs_sec_is_wb_allowed(host))
+		return;
+
+	if (!is_scsi_cmd)
+		return;
+
+	lrbp = &hba->lrb[tag];
+	cmd = lrbp->cmd;
+
+	if (cmd) {
+		u8 opcode = (u8)(*cmd->cmnd);
+
+		if (opcode == WRITE_10) {
+			int curr_block = 0;
+
+			curr_block = (cmd->cmnd[7] << 8) | (cmd->cmnd[8] << 0); // count WRITE block
+			wb_info->wb_current_block += curr_block;
+			wb_info->wb_current_rqs++;
+
+			ufs_sec_wb_update_state(host);
+		}
+	}
+}
+
+static void ufs_qcom_compl_xfer_req(struct ufs_hba *hba, int tag, bool is_scsi_cmd)
+{
+	struct ufshcd_lrb *lrbp;
+	struct scsi_cmnd *cmd;
+	struct ufs_qcom_host *host = ufshcd_get_variant(hba);
+	struct SEC_WB_info *wb_info = &host->sec_wb_info;
+	u8 sense_key;
+	u8 asc = 0;
+	u8 ascq = 0;
+	u8 opcode = 0;
+	u32 lba = 0;
+	int transfer_len = 0;
+
+	if (!is_scsi_cmd)
+		return;
+
+	lrbp = &hba->lrb[tag];
+	if (!lrbp || !lrbp->cmd)
+		return;
+
+	cmd = lrbp->cmd;
+
+	/* sense err check */
+	sense_key = lrbp->ucd_rsp_ptr->sr.sense_data[2] & 0x0F;
+	if ((sense_key == 0x3) || (sense_key == 0x4)) {
+		asc = lrbp->ucd_rsp_ptr->sr.sense_data[12];
+		ascq = lrbp->ucd_rsp_ptr->sr.sense_data[13];
+
+		opcode = (u8)(*cmd->cmnd);
+		lba = (cmd->cmnd[2] << 24) | (cmd->cmnd[3] << 16) | (cmd->cmnd[4] << 8) | cmd->cmnd[5];
+		transfer_len = (cmd->cmnd[7] << 8) | cmd->cmnd[8];
+
+		pr_err("UFS : sense key 0x%x(asc 0x%x, ascq 0x%x), opcode 0x%x, lba 0x%x, len 0x%x.\n",
+				sense_key, asc, ascq, opcode, lba, transfer_len);
+
+#if IS_ENABLED(CONFIG_SEC_ABC)
+		if (sense_key == 0x3)
+			sec_abc_send_event("MODULE=storage@ERROR=ufs_medium_err");
+#endif
+
+#if IS_ENABLED(CONFIG_SEC_DEBUG)
+		if (sec_debug_is_enabled())
+			(sense_key == 0x3) ? panic("ufs medium error\n") : panic("ufs hardware error\n");
+#endif
+	}
+
+	if (!ufs_sec_is_wb_allowed(host))
+		return;
+
+	if (cmd) {
+		opcode = (u8)(*cmd->cmnd);
+
+		if (opcode == WRITE_10) {
+			int curr_block = 0;
+
+			curr_block = (cmd->cmnd[7] << 8) | (cmd->cmnd[8] << 0); // count WRITE block
+			wb_info->wb_current_block -= curr_block;
+			wb_info->wb_current_rqs--;
+
+			if (hba->wb_enabled)
+				wb_info->wb_curr_issued_block += (unsigned int)curr_block;
+
+			ufs_sec_wb_update_state(host);
+		}
+	}
+}
+#endif	// IS_ENABLED(CONFIG_SEC_UFS_WB_FEATURE)
+
 static int ufs_qcom_get_pwr_dev_param(struct ufs_qcom_dev_params *qcom_param,
 				      struct ufs_pa_layer_attr *dev_max,
 				      struct ufs_pa_layer_attr *agreed_pwr)
@@ -1196,6 +1779,32 @@ static int ufs_qcom_resume(struct ufs_hba *hba, enum ufs_pm_op pm_op)
 	struct ufs_qcom_host *host = ufshcd_get_variant(hba);
 	int err;
 
+#if IS_ENABLED(CONFIG_SEC_UFS_WB_FEATURE)
+	/*
+	 * Change WB state to WB_OFF to default in resume sequence.
+	 * In system PM, the link is "link off state" or "hibern8".
+	 * In case of link off state,
+	 *  just reset the WB state because UFS device needs to setup link.
+	 * In Hibern8 state,
+	 *  wb_off reset and WB off are required.
+	 */
+	if (ufshcd_is_system_pm(pm_op)) {
+		struct SEC_WB_info *wb_info = &host->sec_wb_info;
+
+		set_wb_state(wb_info, WB_OFF);
+		trace_mark_count('C', "UFS-WB", "state", wb_info->state, 0, 0, 0, 1);
+
+		/* reset wb state and off */
+		if (ufshcd_is_link_hibern8(hba) && ufs_sec_is_wb_allowed(host)) {
+			/* reset wb disable count and enable wb */
+			atomic_set(&wb_info->wb_off_cnt, 0);
+			wb_info->wb_off = false;
+
+			queue_work(host->SEC_WB_workq, &host->SEC_WB_off_work);
+		}
+	}
+#endif
+
 	if (host->vddp_ref_clk && (hba->rpm_lvl > UFS_PM_LVL_3 ||
 				   hba->spm_lvl > UFS_PM_LVL_3))
 		ufs_qcom_enable_vreg(hba->dev,
@@ -1764,6 +2373,8 @@ static int ufs_qcom_pwr_change_notify(struct ufs_hba *hba,
 		if (ufshcd_is_hs_mode(&hba->pwr_info) &&
 			!ufshcd_is_hs_mode(dev_req_params))
 			ufs_qcom_dev_ref_clk_ctrl(host, false);
+
+		host->skip_flush = false;
 		break;
 	default:
 		ret = -EINVAL;
@@ -1841,6 +2452,39 @@ static void ufs_qcom_override_pa_h8time(struct ufs_hba *hba)
 }
 #endif
 
+static void ufs_set_sec_features(struct ufs_hba *hba)
+{
+	int buff_len;
+	u8 *desc_buf = NULL;
+	int err;
+
+	ufs_vdi.hba = hba;
+
+	/* read device desc */
+	buff_len = hba->desc_size.dev_desc;
+	desc_buf = kmalloc(buff_len, GFP_KERNEL);
+	if (!desc_buf)
+		return;
+
+	err = ufshcd_query_descriptor_retry(hba, UPIU_QUERY_OPCODE_READ_DESC,
+			QUERY_DESC_IDN_DEVICE, 0, 0,
+			desc_buf, &buff_len);
+	if (err) {
+		dev_err(hba->dev, "%s: Failed reading device descriptor. err %d",
+				__func__, err);
+		goto out;
+	}
+
+	ufs_set_sec_unique_number(hba, desc_buf); 
+	ufs_get_health_desc(hba); 
+
+#if IS_ENABLED(CONFIG_SEC_UFS_WB_FEATURE)
+	ufs_sec_wb_probe(hba, desc_buf);
+#endif
+out:
+	kfree(desc_buf);
+}
+
 static int ufs_qcom_apply_dev_quirks(struct ufs_hba *hba)
 {
 	unsigned long flags;
@@ -1849,8 +2493,8 @@ static int ufs_qcom_apply_dev_quirks(struct ufs_hba *hba)
 	spin_lock_irqsave(hba->host->host_lock, flags);
 	/* Set the rpm auto suspend delay to 3s */
 	hba->host->hostt->rpm_autosuspend_delay = UFS_QCOM_AUTO_SUSPEND_DELAY;
-	/* Set the default auto-hiberate idle timer value to 5ms */
-	hba->ahit = FIELD_PREP(UFSHCI_AHIBERN8_TIMER_MASK, 5) |
+	/* Set the default auto-hiberate idle timer value to 10ms */
+	hba->ahit = FIELD_PREP(UFSHCI_AHIBERN8_TIMER_MASK, 10) |
 		    FIELD_PREP(UFSHCI_AHIBERN8_SCALE_MASK, 3);
 	/* Set the clock gating delay to performance mode */
 	hba->clk_gating.delay_ms = UFS_QCOM_CLK_GATING_DELAY_MS_PERF;
@@ -1871,6 +2515,21 @@ static int ufs_qcom_apply_dev_quirks(struct ufs_hba *hba)
 	if (hba->dev_quirks & UFS_DEVICE_QUIRK_PA_HIBER8TIME)
 		ufs_qcom_override_pa_h8time(hba);
 #endif
+
+	/* check only at the first init */
+	if (!(hba->eh_flags || hba->pm_op_in_progress)) {
+		/* sec special features */
+		ufs_set_sec_features(hba);
+
+#if IS_ENABLED(CONFIG_SCSI_UFS_TEST_MODE)
+		dev_info(hba->dev, "UFS test mode enabled\n");
+#endif
+	}
+
+#if IS_ENABLED(CONFIG_SEC_UFS_WB_FEATURE)
+	ufs_sec_wb_config(hba, true);
+#endif
+
 	return err;
 }
 
@@ -1937,7 +2596,9 @@ static void ufs_qcom_set_caps(struct ufs_hba *hba)
 			UFSHCD_CAP_HIBERN8_WITH_CLK_GATING |
 			UFSHCD_CAP_CLK_SCALING | UFSHCD_CAP_AUTO_BKOPS_SUSPEND |
 			UFSHCD_CAP_RPM_AUTOSUSPEND;
+#if !IS_ENABLED(CONFIG_SEC_UFS_WB_FEATURE)
 		hba->caps |= UFSHCD_CAP_WB_EN;
+#endif
 	}
 
 	if (host->hw_ver.major >= 0x2) {
@@ -2323,37 +2984,6 @@ ufs_qcom_query_ioctl(struct ufs_hba *hba, u8 lun, void __user *buffer)
 					ioctl_data->idn, index, 0, &att);
 		break;
 
-	case UPIU_QUERY_OPCODE_WRITE_ATTR:
-		err = copy_from_user(&att,
-				     buffer +
-				     sizeof(struct ufs_ioctl_query_data),
-				     sizeof(u32));
-		if (err) {
-			dev_err(hba->dev,
-				"%s: Failed copying buffer from user, err %d\n",
-				__func__, err);
-			goto out_release_mem;
-		}
-
-		switch (ioctl_data->idn) {
-		case QUERY_ATTR_IDN_BOOT_LU_EN:
-			index = 0;
-			if (!att) {
-				dev_err(hba->dev,
-					"%s: Illegal ufs query ioctl data, opcode 0x%x, idn 0x%x, att 0x%x\n",
-					__func__, ioctl_data->opcode,
-					(unsigned int)ioctl_data->idn, att);
-				err = -EINVAL;
-				goto out_release_mem;
-			}
-			break;
-		default:
-			goto out_einval;
-		}
-		err = ufshcd_query_attr(hba, ioctl_data->opcode,
-					ioctl_data->idn, index, 0, &att);
-		break;
-
 	case UPIU_QUERY_OPCODE_READ_FLAG:
 		switch (ioctl_data->idn) {
 		case QUERY_FLAG_IDN_FDEVICEINIT:
@@ -2399,8 +3029,6 @@ ufs_qcom_query_ioctl(struct ufs_hba *hba, u8 lun, void __user *buffer)
 		ioctl_data->buf_size = 1;
 		data_ptr = &flag;
 		break;
-	case UPIU_QUERY_OPCODE_WRITE_ATTR:
-		goto out_release_mem;
 	default:
 		goto out_einval;
 	}
@@ -2527,8 +3155,22 @@ static int ufs_qcom_update_qos_constraints(struct qos_cpu_group *qcg,
 static void ufs_qcom_qos(struct ufs_hba *hba, int tag, bool is_scsi_cmd)
 {
 	struct ufs_qcom_host *host = ufshcd_get_variant(hba);
+	struct ufshcd_lrb *lrbp = &hba->lrb[tag];
 	struct qos_cpu_group *qcg;
+	unsigned char *cmnd;
 	int cpu;
+
+#if IS_ENABLED(CONFIG_SEC_UFS_WB_FEATURE)
+	ufs_qcom_setup_xfer_req(hba, tag, is_scsi_cmd);
+#endif
+	if (lrbp && lrbp->cmd) {
+		cmnd = lrbp->cmd->cmnd;
+
+		/* 0x28 : READ(10), 0x2A : WRITE(10) */
+		/* cmnd[7] & cmnd[8] is the length of the data, 4KB unit */
+		if (cmnd[0] == 0x28 || cmnd[0] == 0x2A)
+			host->transferred_bytes += (u64)((cmnd[7] << 8) | cmnd[8]) * 4096;
+	}
 
 	if (!host->ufs_qos)
 		return;
@@ -2888,6 +3530,17 @@ static int ufs_qcom_init(struct ufs_hba *hba)
 #endif
 
 	ufs_qcom_save_host_ptr(hba);
+
+#if IS_ENABLED(CONFIG_SEC_UFS_WB_FEATURE)
+	if (ufs_sec_parse_wb_info(host)) {
+		char wq_name[sizeof("SEC_WB_00")];
+
+		INIT_WORK(&host->SEC_WB_on_work, ufs_sec_wb_on_work_func);
+		INIT_WORK(&host->SEC_WB_off_work, ufs_sec_wb_off_work_func);
+		snprintf(wq_name, sizeof(wq_name), "SEC_WB_%d", 0);
+		host->SEC_WB_workq = create_freezable_workqueue(wq_name);
+	}
+#endif
 
 	ufs_qcom_qos_init(hba);
 	goto out;
@@ -3402,6 +4055,11 @@ static void ufs_qcom_dump_dbg_regs(struct ufs_hba *hba)
 		ufs_qcom_phy_dbg_register_dump(phy);
 		ufshcd_print_fsm_state(hba);
 	}
+
+#if IS_ENABLED(CONFIG_SCSI_UFS_TEST_MODE)
+	/* do not recover system if test mode is enabled */
+	BUG_ON(1);
+#endif
 }
 
 /*
@@ -3468,6 +4126,20 @@ static void ufs_qcom_parse_lpm(struct ufs_qcom_host *host)
 static void ufs_qcom_device_reset(struct ufs_hba *hba)
 {
 	struct ufs_qcom_host *host = ufshcd_get_variant(hba);
+
+	/* guarantee device internal cache flush */
+	if (hba->eh_flags && (hba->uic_link_state == UIC_LINK_ACTIVE_STATE)
+			&& !host->skip_flush) {
+		dev_info(hba->dev, "%s: Waiting for device internal cache flush\n",
+				__func__);
+		ssleep(2);
+		host->skip_flush = true;
+#if IS_ENABLED(CONFIG_SEC_ABC)
+		host->reset_cnt++;
+		if ((host->reset_cnt % 3) == 0)
+			sec_abc_send_event("MODULE=storage@ERROR=ufs_hwreset_err");
+#endif
+	}
 
 	/* reset gpio is optional */
 	if (!host->device_reset)
@@ -3548,6 +4220,9 @@ static const struct ufs_hba_variant_ops ufs_hba_qcom_vops = {
 	.setup_xfer_req         = ufs_qcom_qos,
 #if defined(CONFIG_SCSI_UFSHCD_QTI)
 	.fixup_dev_quirks       = ufs_qcom_fixup_dev_quirks,
+#endif
+#if IS_ENABLED(CONFIG_SEC_UFS_WB_FEATURE)
+	.compl_xfer_req		= ufs_qcom_compl_xfer_req,
 #endif
 };
 
@@ -3687,6 +4362,329 @@ static const struct attribute_group ufs_qcom_sysfs_group = {
 	.name = "qcom",
 	.attrs = ufs_qcom_sysfs_attrs,
 };
+/* sec special features */
+static void ufs_set_sec_unique_number(struct ufs_hba *hba, u8 *desc_buf)
+{
+	u8 manid;
+	u8 serial_num_index;
+	u8 snum_buf[UFS_UN_MAX_DIGITS];
+	int buff_len;
+	u8 *str_desc_buf = NULL;
+	int err;
+
+	/* read string desc */
+	buff_len = QUERY_DESC_MAX_SIZE;
+	str_desc_buf = kzalloc(buff_len, GFP_KERNEL);
+	if (!str_desc_buf)
+		goto out;
+
+	serial_num_index = desc_buf[DEVICE_DESC_PARAM_SN];
+
+	/* spec is unicode but sec uses hex data */
+	err = ufshcd_query_descriptor_retry(hba, UPIU_QUERY_OPCODE_READ_DESC,
+			QUERY_DESC_IDN_STRING, serial_num_index, 0,
+			str_desc_buf, &buff_len);
+	if (err) {
+		dev_err(hba->dev, "%s: Failed reading string descriptor. err %d",
+				__func__, err);
+		goto out;
+	}
+
+	/* setup unique_number */
+	manid = desc_buf[DEVICE_DESC_PARAM_MANF_ID + 1];
+	memset(snum_buf, 0, sizeof(snum_buf));
+	memcpy(snum_buf, str_desc_buf + QUERY_DESC_HDR_SIZE, SERIAL_NUM_SIZE);
+	memset(ufs_vdi.unique_number, 0, sizeof(ufs_vdi.unique_number));
+
+	sprintf(ufs_vdi.unique_number, "%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X",
+			manid,
+			desc_buf[DEVICE_DESC_PARAM_MANF_DATE], desc_buf[DEVICE_DESC_PARAM_MANF_DATE + 1],
+			snum_buf[0], snum_buf[1], snum_buf[2], snum_buf[3], snum_buf[4], snum_buf[5], snum_buf[6]);
+
+	/* Null terminate the unique number string */
+	ufs_vdi.unique_number[UFS_UN_20_DIGITS] = '\0';
+
+	dev_dbg(hba->dev, "%s: ufs un : %s\n", __func__, ufs_vdi.unique_number);
+out:
+	if (str_desc_buf)
+		kfree(str_desc_buf);
+}
+
+static void ufs_get_health_desc(struct ufs_hba *hba)
+{
+	int buff_len;
+	u8 *desc_buf = NULL;
+	int err;
+
+	buff_len = hba->desc_size.hlth_desc;
+	desc_buf = kmalloc(buff_len, GFP_KERNEL);
+	if (!desc_buf)
+		return;
+
+	err = ufshcd_query_descriptor_retry(hba, UPIU_QUERY_OPCODE_READ_DESC,
+			QUERY_DESC_IDN_HEALTH, 0, 0,
+			desc_buf, &buff_len);
+	if (err) {
+		dev_err(hba->dev, "%s: Failed reading health descriptor. err %d",
+				__func__, err);
+		goto out;
+	}
+
+	/* getting Life Time at Device Health DESC*/
+	ufs_vdi.lifetime = desc_buf[HEALTH_DESC_PARAM_LIFE_TIME_EST_A];
+
+	dev_info(hba->dev, "LT: 0x%02x\n", (desc_buf[3] << 4) | desc_buf[4]);
+out:
+	if (desc_buf)
+		kfree(desc_buf);
+}
+
+static ssize_t ufs_unique_number_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "%s\n", ufs_vdi.unique_number);
+}
+static DEVICE_ATTR(un, 0440, ufs_unique_number_show, NULL);
+
+static ssize_t ufs_lt_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct ufs_hba *hba = dev_get_drvdata(dev);
+
+	if (!hba) {
+		dev_err(dev, "skipping ufs lt read\n");
+		ufs_vdi.lifetime = 0;
+	} else if (hba->ufshcd_state == UFSHCD_STATE_OPERATIONAL) {
+		pm_runtime_get_sync(hba->dev);
+		ufs_get_health_desc(hba);
+		pm_runtime_put(hba->dev);
+	} else {
+		/* return previous LT value if not operational */
+		dev_info(hba->dev, "ufshcd_state : %d, old LT: %01x\n",
+				hba->ufshcd_state, ufs_vdi.lifetime);
+	}
+	return snprintf(buf, PAGE_SIZE, "%01x\n", ufs_vdi.lifetime);
+}
+static DEVICE_ATTR(lt, 0444, ufs_lt_show, NULL);
+
+static ssize_t ufs_lc_info_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%u\n", ufs_vdi.lc_info);
+}
+
+static ssize_t ufs_lc_info_store(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t count)
+{
+	unsigned int value;
+
+	if (kstrtou32(buf, 0, &value))
+		return -EINVAL;
+
+	ufs_vdi.lc_info = value;
+
+	return count;
+}
+static DEVICE_ATTR(lc, 0664, ufs_lc_info_show, ufs_lc_info_store);
+
+static ssize_t man_id_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct ufs_hba *hba = dev_get_drvdata(dev);
+
+	return sprintf(buf, "%04x\n", hba->dev_info.wmanufacturerid);
+}
+static DEVICE_ATTR_RO(man_id);
+
+#if IS_ENABLED(CONFIG_SEC_UFS_WB_FEATURE)
+static ssize_t ufs_sec_wb_support_store(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t count)
+{
+	u32 value;
+	struct ufs_hba *hba = dev_get_drvdata(dev);
+	struct ufs_qcom_host *host = ufshcd_get_variant(hba);
+	struct SEC_WB_info *wb_info = &host->sec_wb_info;
+	unsigned long flags;
+	int ret = 0;
+
+	if (!wb_info->wb_setup_done) {
+		dev_err(hba->dev, "SEC WB is not ready yet.\n");
+		goto out;
+	}
+
+	if (kstrtou32(buf, 0, &value))
+		return -EINVAL;
+
+	value = !!value;
+
+	if (value == wb_info->wb_support) {
+		dev_err(hba->dev, "SEC WB is already %s.\n", value ? "supported" : "not supported");
+		goto out;
+	}
+
+	// change support first
+	wb_info->wb_support = value;
+
+	if (!value) {
+		cancel_work_sync(&host->SEC_WB_on_work);
+		cancel_work_sync(&host->SEC_WB_off_work);
+
+		pr_err("no support SEC WB : set state %d -> %d.\n", wb_info->state, WB_OFF);
+
+		spin_lock_irqsave(hba->host->host_lock, flags);
+		set_wb_state(wb_info, WB_OFF);
+		spin_unlock_irqrestore(hba->host->host_lock, flags);
+
+		trace_mark_count('C', "UFS-WB", "state", wb_info->state, 0, 0, 0, 1);
+
+		if (hba->wb_enabled) {	// need to WB off
+			ret = ufs_sec_wb_ctrl(hba, false, true);
+			ufs_sec_wb_update_summary_stats(wb_info);
+			if (ret)
+				pr_err("disable SEC WB is failed ret=%d.\n", ret);
+		}
+	} else
+		pr_err("support SEC WB.\n");
+
+out:
+	return count;
+}
+
+static ssize_t ufs_sec_wb_support_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct ufs_hba *hba = dev_get_drvdata(dev);
+	struct ufs_qcom_host *host = ufshcd_get_variant(hba);
+	struct SEC_WB_info *wb_info = &host->sec_wb_info;
+
+	return sprintf(buf, "%s:%s\n", wb_info->wb_support ? "Support" : "No support",
+			hba->wb_enabled ? "on" : "off");
+}
+static DEVICE_ATTR(sec_wb_support, 0664, ufs_sec_wb_support_show, ufs_sec_wb_support_store);
+
+static ssize_t ufs_sec_wb_enable_store(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t count)
+{
+	u32 value;
+	struct ufs_hba *hba = dev_get_drvdata(dev);
+	struct ufs_qcom_host *host = ufshcd_get_variant(hba);
+	struct SEC_WB_info *wb_info = &host->sec_wb_info;
+	unsigned long flags;
+
+	if (!wb_info->wb_setup_done) {
+		dev_err(hba->dev, "SEC WB is not ready yet.\n");
+		return -ENODEV;
+	}
+
+	if (!ufs_sec_is_wb_allowed(host)) {
+		pr_err("%s: not allowed.\n", __func__);
+		return -EPERM;
+	}
+
+	if (kstrtou32(buf, 0, &value))
+		return -EINVAL;
+
+	spin_lock_irqsave(hba->host->host_lock, flags);
+	value = !!value;
+
+	if (!value) {
+		if (atomic_inc_return(&wb_info->wb_off_cnt) == 1) {
+			wb_info->wb_off = true;
+			pr_err("disable SEC WB : state %d.\n", wb_info->state);
+		}
+	} else {
+		if (atomic_dec_and_test(&wb_info->wb_off_cnt)) {
+			wb_info->wb_off = false;
+			pr_err("enable SEC WB.\n");
+		}
+	}
+	spin_unlock_irqrestore(hba->host->host_lock, flags);
+
+	return count;
+}
+
+static ssize_t ufs_sec_wb_enable_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct ufs_hba *hba = dev_get_drvdata(dev);
+	struct ufs_qcom_host *host = ufshcd_get_variant(hba);
+	struct SEC_WB_info *wb_info = &host->sec_wb_info;
+
+	return sprintf(buf, "%s\n", wb_info->wb_off ? "off" : "Enabled");
+}
+static DEVICE_ATTR(sec_wb_enable, 0664, ufs_sec_wb_enable_show, ufs_sec_wb_enable_store);
+
+SEC_UFS_WB_DATA_ATTR(wb_up_threshold_block, "%d\n", up_threshold_block);
+SEC_UFS_WB_DATA_ATTR(wb_up_threshold_rqs, "%d\n", up_threshold_rqs);
+SEC_UFS_WB_DATA_ATTR(wb_down_threshold_block, "%d\n", down_threshold_block);
+SEC_UFS_WB_DATA_ATTR(wb_down_threshold_rqs, "%d\n", down_threshold_rqs);
+SEC_UFS_WB_DATA_ATTR(lp_wb_up_threshold_block, "%d\n", lp_up_threshold_block);
+SEC_UFS_WB_DATA_ATTR(lp_wb_up_threshold_rqs, "%d\n", lp_up_threshold_rqs);
+SEC_UFS_WB_DATA_ATTR(lp_wb_down_threshold_block, "%d\n", lp_down_threshold_block);
+SEC_UFS_WB_DATA_ATTR(lp_wb_down_threshold_rqs, "%d\n", lp_down_threshold_rqs);
+
+SEC_UFS_WB_TIME_ATTR(wb_on_delay_ms, "%d\n", on_delay);
+SEC_UFS_WB_TIME_ATTR(wb_off_delay_ms, "%d\n", off_delay);
+SEC_UFS_WB_TIME_ATTR(lp_wb_on_delay_ms, "%d\n", lp_on_delay);
+SEC_UFS_WB_TIME_ATTR(lp_wb_off_delay_ms, "%d\n", lp_off_delay);
+
+SEC_UFS_WB_DATA_RO_ATTR(wb_state, "%d,%u\n", wb_info->state, jiffies_to_msecs(jiffies - wb_info->state_ts));
+SEC_UFS_WB_DATA_RO_ATTR(wb_current_stat, "current : block %d, rqs %d, issued blocks %d\n",
+		wb_info->wb_current_block, wb_info->wb_current_rqs, wb_info->wb_curr_issued_block);
+SEC_UFS_WB_DATA_RO_ATTR(wb_current_min_max_stat, "current issued blocks : min %d, max %d.\n",
+		wb_info->wb_curr_issued_min_block, wb_info->wb_curr_issued_max_block);
+SEC_UFS_WB_DATA_RO_ATTR(wb_total_stat, "total : %dMB\n\t<  4GB:%d\n\t<  8GB:%d\n\t< 16GB:%d\n\t>=16GB:%d\n",
+		wb_info->wb_total_issued_mb,
+		wb_info->wb_issued_size_cnt[0],
+		wb_info->wb_issued_size_cnt[1],
+		wb_info->wb_issued_size_cnt[2],
+		wb_info->wb_issued_size_cnt[3]);
+#endif	// IS_ENABLED(CONFIG_SEC_UFS_WB_FEATURE)
+
+static ssize_t transferred_cnt_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct ufs_hba *hba = dev_get_drvdata(dev);
+	struct ufs_qcom_host *host = ufshcd_get_variant(hba);
+
+	return sprintf(buf, "%llu\n", host->transferred_bytes);
+}
+static DEVICE_ATTR_RO(transferred_cnt);
+
+static struct device *sec_ufs_cmd_dev;
+
+static struct attribute *sec_ufs_info_attributes[] = {
+	&dev_attr_un.attr,
+	&dev_attr_lt.attr,
+	&dev_attr_lc.attr,
+	&dev_attr_man_id.attr,
+	&dev_attr_transferred_cnt.attr,
+	NULL
+};
+
+static struct attribute_group sec_ufs_info_attribute_group = {
+	.attrs	= sec_ufs_info_attributes,
+};
+
+
+void ufs_sec_create_sysfs(struct ufs_hba *hba)
+{
+	int ret;
+
+	/* sec specific vendor sysfs nodes */
+	if (!sec_ufs_cmd_dev)
+		sec_ufs_cmd_dev = sec_device_create(hba, "ufs");
+
+	if (IS_ERR(sec_ufs_cmd_dev)) {
+			pr_err("Fail to create sysfs dev\n");
+	} else {
+		ret = sysfs_create_group(&sec_ufs_cmd_dev->kobj,
+				&sec_ufs_info_attribute_group);
+		if (ret)
+			dev_err(hba->dev, "%s: Failed to create sec_ufs_info sysfs group (err = %d)\n",
+					__func__, ret);
+	}
+}
 
 static int ufs_qcom_init_sysfs(struct ufs_hba *hba)
 {
@@ -3697,8 +4695,60 @@ static int ufs_qcom_init_sysfs(struct ufs_hba *hba)
 		dev_err(hba->dev, "%s: Failed to create qcom sysfs group (err = %d)\n",
 				 __func__, ret);
 
+	/* sec specific vendor sysfs nodes */
+	ufs_sec_create_sysfs(hba);
+
 	return ret;
 }
+
+#if IS_ENABLED(CONFIG_SEC_UFS_WB_FEATURE)
+static struct attribute *sec_ufs_wb_attributes[] = {
+	&dev_attr_sec_wb_support.attr,
+	&dev_attr_sec_wb_enable.attr,
+	&dev_attr_wb_up_threshold_block.attr,
+	&dev_attr_wb_up_threshold_rqs.attr,
+	&dev_attr_wb_down_threshold_block.attr,
+	&dev_attr_wb_down_threshold_rqs.attr,
+	&dev_attr_lp_wb_up_threshold_block.attr,
+	&dev_attr_lp_wb_up_threshold_rqs.attr,
+	&dev_attr_lp_wb_down_threshold_block.attr,
+	&dev_attr_lp_wb_down_threshold_rqs.attr,
+	&dev_attr_wb_on_delay_ms.attr,
+	&dev_attr_wb_off_delay_ms.attr,
+	&dev_attr_lp_wb_on_delay_ms.attr,
+	&dev_attr_lp_wb_off_delay_ms.attr,
+	&dev_attr_wb_state.attr,
+	&dev_attr_wb_current_stat.attr,
+	&dev_attr_wb_current_min_max_stat.attr,
+	&dev_attr_wb_total_stat.attr,
+	NULL
+};
+
+static struct attribute_group sec_ufs_wb_attribute_group = {
+	.attrs	= sec_ufs_wb_attributes,
+};
+
+static void ufs_sec_wb_init_sysfs(struct ufs_hba *hba)
+{
+	int ret;
+
+	/* The sec_ufs_cmd_dev must be created
+	 * in ufs_qcom_init_sysfs() before this.
+	 * If sec_ufs_cmd_dev is NULL, try to create again. */
+	if (!sec_ufs_cmd_dev)
+		sec_ufs_cmd_dev = sec_device_create(hba, "ufs");
+
+	if (IS_ERR(sec_ufs_cmd_dev)) {
+			pr_err("Fail to create sysfs dev\n");
+	} else {
+		ret = sysfs_create_group(&sec_ufs_cmd_dev->kobj,
+				&sec_ufs_wb_attribute_group);
+		if (ret)
+			dev_err(hba->dev, "%s: Failed to create sec_ufs_wb sysfs group (err = %d)\n",
+					__func__, ret);
+	}
+}
+#endif
 
 /**
  * ufs_qcom_probe - probe routine of the driver

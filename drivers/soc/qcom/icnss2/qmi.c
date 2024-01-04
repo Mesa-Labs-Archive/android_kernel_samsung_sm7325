@@ -925,7 +925,9 @@ void icnss_dms_deinit(struct icnss_priv *priv)
 {
 	qmi_handle_release(&priv->qmi_dms);
 }
-
+#ifdef CONFIG_SEC_SS_CNSS_FEATURE_SYSFS
+extern int ant_from_macloader;
+#endif /* CONFIG_SEC_SS_CNSS_FEATURE_SYSFS */
 static int icnss_get_bdf_file_name(struct icnss_priv *priv,
 				   u32 bdf_type, char *filename,
 				   u32 filename_len)
@@ -936,11 +938,31 @@ static int icnss_get_bdf_file_name(struct icnss_priv *priv,
 	switch (bdf_type) {
 	case ICNSS_BDF_ELF:
 		if (priv->board_id == 0xFF)
+#ifdef CONFIG_SEC_SS_CNSS_FEATURE_SYSFS
+			if (ant_from_macloader == 1 || ant_from_macloader == 2 || ant_from_macloader == 10) { // 10: for GTX disabled bdf
+				snprintf(filename_tmp, filename_len, ELF_BDF_FILE_NAME "%d",
+					ant_from_macloader);
+			}
+			else
+				snprintf(filename_tmp, filename_len, ELF_BDF_FILE_NAME);
+#else /* !CONFIG_SEC_SS_CNSS_FEATURE_SYSFS */
 			snprintf(filename_tmp, filename_len, ELF_BDF_FILE_NAME);
+#endif /* CONFIG_SEC_SS_CNSS_FEATURE_SYSFS */
 		else if (priv->board_id < 0xFF)
+#ifdef CONFIG_SEC_SS_CNSS_FEATURE_SYSFS
+			if (ant_from_macloader == 1 || ant_from_macloader == 2 || ant_from_macloader == 10) { // 10: for GTX disabled bdf
+				snprintf(filename_tmp, filename_len,
+					 ELF_BDF_FILE_NAME_PREFIX "%02x%d",
+					 priv->board_id, ant_from_macloader);
+			} else
+				snprintf(filename_tmp, filename_len,
+					 ELF_BDF_FILE_NAME_PREFIX "%02x",
+					 priv->board_id);
+#else /* !CONFIG_SEC_SS_CNSS_FEATURE_SYSFS */
 			snprintf(filename_tmp, filename_len,
 				 ELF_BDF_FILE_NAME_PREFIX "%02x",
 				 priv->board_id);
+#endif /* CONFIG_SEC_SS_CNSS_FEATURE_SYSFS */
 		else
 			snprintf(filename_tmp, filename_len,
 				 BDF_FILE_NAME_PREFIX "%02x.e%02x",

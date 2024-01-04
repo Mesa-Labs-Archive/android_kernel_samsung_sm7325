@@ -29,6 +29,10 @@
 #include "rpmsg_internal.h"
 #include "qcom_glink_native.h"
 
+#if IS_ENABLED(CONFIG_SEC_PM)
+#include <linux/wakeup_reason.h>
+#endif
+
 #define GLINK_LOG_PAGE_CNT 2
 #define GLINK_INFO(ctxt, x, ...)					  \
 	ipc_log_string(ctxt, "[%s]: "x, __func__, ##__VA_ARGS__)
@@ -1262,6 +1266,9 @@ static irqreturn_t qcom_glink_native_intr(int irq, void *data)
 
 	if (should_wake) {
 		pr_info("%s: %d triggered %s\n", __func__, irq, glink->irqname);
+#if IS_ENABLED(CONFIG_SEC_PM)
+		log_irq_wakeup_reason(irq);
+#endif
 		glink_resume_pkt = true;
 		pm_system_wakeup();
 	}

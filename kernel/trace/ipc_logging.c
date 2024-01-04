@@ -25,6 +25,10 @@
 
 #include "ipc_logging_private.h"
 
+#if IS_ENABLED(CONFIG_SEC_DEBUG)
+#include <linux/sec_debug.h>
+#endif
+
 #define LOG_PAGE_DATA_SIZE	sizeof(((struct ipc_log_page *)0)->data)
 #define LOG_PAGE_FLAG (1 << 31)
 #define MAX_MINIDUMP_BUFFERS CONFIG_IPC_LOG_MINIDUMP_BUFFERS
@@ -843,6 +847,11 @@ void *ipc_log_context_create(int max_num_pages,
 	if (ctxt)
 		return ctxt;
 
+#if IS_ENABLED(CONFIG_SEC_DEBUG) && !IS_ENABLED(CONFIG_DEBUG_FS)
+	if (!sec_debug_is_enabled())
+		return 0;
+#endif
+
 	ctxt = kzalloc(sizeof(struct ipc_log_context), GFP_KERNEL);
 	if (!ctxt)
 		return 0;
@@ -973,9 +982,52 @@ int ipc_log_context_destroy(void *ctxt)
 }
 EXPORT_SYMBOL(ipc_log_context_destroy);
 
+
+#define LOG_CTX_PAGE_CNT 150
+static void *log_ctx;
+#define MAX_LINE_SIZE 512
+static char *buf;
+
+void net_log(const char *fmt, ...)
+{
+	va_list arg_list;
+
+	va_start(arg_list, fmt);
+	if (log_ctx && buf) {
+		vscnprintf(buf, MAX_LINE_SIZE, fmt, arg_list);
+		ipc_log_string(log_ctx, "%s", buf);
+	}
+	va_end(arg_list);
+}
+EXPORT_SYMBOL_GPL(net_log);
+
+static int __init net_ipc_log_init(void)
+{
+
+	if (!log_ctx)
+		log_ctx = ipc_log_context_create(LOG_CTX_PAGE_CNT,
+							"net_log", 0);
+	if (!buf)
+		buf = kmalloc(MAX_LINE_SIZE, GFP_KERNEL);
+
+	// error ????
+	//
+	return 0;
+}
+
+static void __exit net_ipc_log_exit(void)
+{
+	if (log_ctx)
+		ipc_log_context_destroy(log_ctx);
+	if (buf)
+		kfree(buf);
+}
+
 static int __init ipc_logging_init(void)
 {
 	check_and_create_debugfs();
+	
+	net_ipc_log_init();
 
 	register_minidump((u64)&ipc_log_context_list, sizeof(struct list_head),
 			  "ipc_log_ctxt_list", minidump_buf_cnt);
@@ -983,7 +1035,13 @@ static int __init ipc_logging_init(void)
 	return 0;
 }
 
+static void __exit ipc_logging_exit(void)
+{
+	net_ipc_log_exit();
+}
+
 module_init(ipc_logging_init);
+module_exit(ipc_logging_exit);
 
 MODULE_DESCRIPTION("ipc logging");
 MODULE_LICENSE("GPL v2");

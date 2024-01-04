@@ -11,6 +11,11 @@
 		status = "ok";
 	};
 
+	qcom,cam-res-mgr {
+		compatible = "qcom,cam-res-mgr";
+		status = "ok";
+	};
+
 	cam_csiphy0: qcom,csiphy0 {
 		cell-index = <0>;
 		compatible = "qcom,csiphy-v1.2.1", "qcom,csiphy";

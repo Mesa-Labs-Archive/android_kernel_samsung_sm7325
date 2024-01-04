@@ -251,6 +251,18 @@ config USB_F_FS_IPC_LOGGING
 	  client. Separate IPC log contexts are created for each function
 	  instance at mount time.
 
+config USB_F_MTP
+	tristate
+
+config USB_F_PTP
+	tristate
+
+config USB_F_CONN_GADGET
+	tristate
+
+config USB_F_SS_MON_GADGET
+	tristate
+
 # this first set of drivers all depend on bulk-capable hardware.
 
 config USB_CONFIGFS
@@ -352,6 +364,38 @@ config USB_CONFIGFS_RNDIS
 	   XP, you'll need to download drivers from Microsoft's website; a URL
 	   is given in comments found in that info file.
 
+config USB_CONFIGFS_F_CONN_GADGET
+	bool "Samsung Sidesync function"
+	depends on USB_CONFIGFS
+	select USB_F_CONN_GADGET
+	help
+	  USB Sidesync function support
+
+config USB_CONFIGFS_F_SS_MON_GADGET
+	bool "F_SAMSUNG gadget"
+	depends on USB_CONFIGFS
+	select USB_F_SS_MON_GADGET
+	help
+	 Driver for control to Samsung Usb device layer
+	 For Samung working scenario and saving debug log, etc
+
+config USB_G_ANDROID
+	bool "Android Composite Gadget"
+	help
+	  The Android Composite Gadget supports multiple USB
+	  functions: adb, acm, mass storage, mtp, accessory
+	  and rndis.
+	  Each function can be configured and enabled/disabled
+	  dynamically from userspace through a sysfs interface.
+
+config USB_ANDROID_SAMSUNG_COMPOSITE
+	bool "Samsung Composite function"
+	depends on USB_G_ANDROID
+	help
+	  Provides SAMSUNG composite driver.
+	  Multi Configuration.
+	  If you enable this option, android composite will be changed.
+
 config USB_CONFIGFS_EEM
 	bool "Ethernet Emulation Model (EEM)"
 	depends on USB_CONFIGFS
@@ -413,6 +457,13 @@ config USB_CONFIGFS_F_FS
 	  of composite gadgets such that some of the functions are
 	  implemented in kernel space (for instance Ethernet, serial or
 	  mass storage) and other are implemented in user space.
+
+config F_CONN_GADGET_DEBUGFS
+      bool "Conn gadget debugfs"
+      depends on USB_CONFIGFS_F_CONN_GADGET
+      default n
+      help
+        SydeSync Debugging
 
 config USB_CONFIGFS_F_ACC
 	bool "Accessory gadget"
@@ -607,6 +658,27 @@ config USB_LOW_MEM_VARIANT
 	  low memory variant target. In such case memory needed to be
 	  allocated to buffers of various function drivers can be reduced.
 
+config USB_CONFIGFS_F_MTP
+	bool "MTP gadget"
+	select USB_F_MTP
+	depends on USB_CONFIGFS
+	help
+	  The Media Transfer Protocol (MTP) function mounts USB gadget
+	  as a media device but unlike Mass Storage Gadget, MTP operates
+	  at the file level. Thus exposing the relevant content but hiding
+	  the system/restricted files.
+
+config USB_CONFIGFS_F_PTP
+	bool "PTP gadget"
+	select USB_F_PTP
+	depends on USB_CONFIGFS && USB_CONFIGFS_F_MTP
+	help
+	  The Picture Transfer Protocol (PTP) function driver is a wrapper
+	  around MTP function driver. This function driver mounts USB gadget
+	  as a media device but unlike Mass Storage Gadget, PTP operates
+	  at the file level. Thus exposing the relevant content but hiding
+	  the system/restricted files.
+
 config USB_FUNC_WAKEUP_SUPPORTED
 	bool "USB Function Remote Wakeup support"
 	depends on QGKI
@@ -620,4 +692,12 @@ config USB_FUNC_WAKEUP_SUPPORTED
 
 source "drivers/usb/gadget/legacy/Kconfig"
 
+config USB_DUN_SUPPORT
+	bool "DUN support function"
+        depends on USB_F_ACM
+	help
+	  Provides USB modem serial driver.
+	  This function makes connection to acm from data router.
+	  It uses misc register.
+	  Support fops : open, close, release, read, poll, llseek, ioctl
 endif # USB_GADGET

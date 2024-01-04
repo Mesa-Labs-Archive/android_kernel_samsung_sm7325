@@ -375,4 +375,9 @@ void dsi_phy_set_continuous_clk(struct msm_dsi_phy *phy, bool enable);
  */
 int dsi_phy_get_io_resources(struct msm_io_res *io_res);
 
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+void dsi_phy_store_str(struct msm_dsi_phy *phy, u32 *val);
+void dsi_phy_store_emphasis(struct msm_dsi_phy *phy, u32 *val);
+#endif
+
 #endif /* _DSI_PHY_H_ */

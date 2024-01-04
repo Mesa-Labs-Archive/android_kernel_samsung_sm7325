@@ -136,6 +136,7 @@ static int mmc_decode_csd(struct mmc_card *card)
 			csd->erase_size <<= csd->write_blkbits - 9;
 		}
 
+		/* permanent write protection */
 		if (UNSTUFF_BITS(resp, 13, 1))
 			mmc_card_set_readonly(card);
 		break;
@@ -173,6 +174,7 @@ static int mmc_decode_csd(struct mmc_card *card)
 		csd->write_partial = 0;
 		csd->erase_size = 1;
 
+		/* permanent write protection */
 		if (UNSTUFF_BITS(resp, 13, 1))
 			mmc_card_set_readonly(card);
 		break;
@@ -1468,6 +1470,8 @@ err:
 	mmc_detach_bus(host);
 
 	pr_err("%s: error %d whilst initialising SD card\n",
+		mmc_hostname(host), err);
+	ST_LOG("%s: error %d whilst initialising SD card\n",
 		mmc_hostname(host), err);
 
 	return err;

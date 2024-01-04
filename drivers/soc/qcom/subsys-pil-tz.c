@@ -890,6 +890,11 @@ static void subsys_crash_shutdown(const struct subsys_desc *subsys)
 		qcom_smem_state_update_bits(d->state,
 			BIT(d->force_stop_bit),
 			BIT(d->force_stop_bit));
+#if defined(CONFIG_SEC_DEBUG)
+		if (likely(!in_atomic()))
+			msleep(CRASH_STOP_ACK_TO_MS);
+		else
+#endif
 		mdelay(CRASH_STOP_ACK_TO_MS);
 	}
 }
@@ -1552,6 +1557,10 @@ load_from_pil:
 		rc = PTR_ERR(d->subsys);
 		goto err_subsys;
 	}
+	
+	/* NOTE: copy smem_state here for reset reason gpio */
+	if (!strncmp(d->subsys_desc.name, "modem", 5)) 
+		d->subsys_desc.state = d->state;
 
 	rc = subsys_setup_irqs(pdev);
 	if (rc) {

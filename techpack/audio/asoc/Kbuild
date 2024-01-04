@@ -203,6 +203,11 @@ ifdef CONFIG_SND_SOC_SA8295
 	MACHINE_OBJS += sa8155.o
 endif
 
+# for SAMSUNG AUDIO
+ifdef CONFIG_SND_SOC_WCD938X
+	MACHINE_OBJS += sec_wcd_sysfs_cb.o
+endif
+
 ifdef CONFIG_SND_SOC_CPE
 	CPE_LSM_OBJS += msm-cpe-lsm.o
 endif
@@ -250,6 +255,11 @@ ifdef CONFIG_SND_HWDEP_ROUTING
 endif
 ifdef CONFIG_QTI_PP
 	PLATFORM_OBJS += msm-qti-pp-config.o
+endif
+
+ifdef CONFIG_SEC_SND_ADAPTATION
+	PLATFORM_OBJS += sec_audio_adaptation.o
+	PLATFORM_OBJS += sec_voice_adaptation.o
 endif
 
 LINUX_INC +=	-Iinclude/linux

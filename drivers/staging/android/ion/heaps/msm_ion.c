@@ -70,6 +70,10 @@ static struct ion_heap_desc ion_heap_meta[] = {
 		.name	= ION_SPSS_HEAP_NAME,
 	},
 	{
+		.id     = ION_CAMERA_HEAP_ID,
+		.name   = ION_CAMERA_HEAP_NAME,
+	},
+	{
 		.id	= ION_ADSP_HEAP_ID,
 		.name	= ION_ADSP_HEAP_NAME,
 	},
@@ -166,6 +170,11 @@ static struct ion_heap *ion_heap_create(struct ion_platform_heap *heap_data)
 {
 	struct ion_heap *heap = NULL;
 	int heap_type = heap_data->type;
+
+#ifndef CONFIG_QGKI
+	if (heap_data->id == ION_CAMERA_HEAP_ID)
+		return ERR_PTR(-EINVAL);
+#endif
 
 	switch (heap_type) {
 	case ION_HEAP_TYPE_MSM_SYSTEM:

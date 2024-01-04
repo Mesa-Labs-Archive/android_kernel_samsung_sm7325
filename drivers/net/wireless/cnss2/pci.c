@@ -2924,12 +2924,6 @@ int cnss_wlan_register_driver(struct cnss_wlan_driver *driver_ops)
 	 * from init.target.rc after that. Reject qcacld load from
 	 * vendor_modprobe.sh at early boot to satisfy this requirement.
 	 */
-	if (test_bit(CNSS_IN_COLD_BOOT_CAL, &plat_priv->driver_state)) {
-		cnss_pr_dbg("Start to wait for calibration to complete\n");
-	} else {
-		cnss_pr_err("Reject WLAN Driver insmod before CBC\n");
-		return -EPERM;
-	}
 
 	timeout = cnss_get_timeout(plat_priv, CNSS_TIMEOUT_CALIBRATION);
 	ret = wait_for_completion_timeout(&plat_priv->cal_complete,

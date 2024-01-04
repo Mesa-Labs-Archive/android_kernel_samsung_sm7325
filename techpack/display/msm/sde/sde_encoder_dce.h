@@ -43,4 +43,8 @@ void sde_encoder_dce_flush(struct sde_encoder_virt *sde_enc);
  */
 bool sde_encoder_has_dsc_hw_rev_2(struct sde_encoder_virt *sde_enc);
 
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+int sde_encoder_is_dsc_enabled(struct sde_encoder_virt *sde_enc);
+#endif
+
 #endif /* __SDE_ENCODER_DCE_H__ */

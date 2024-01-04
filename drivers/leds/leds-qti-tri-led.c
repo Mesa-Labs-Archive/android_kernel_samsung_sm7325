@@ -18,6 +18,9 @@
 #include <linux/pwm.h>
 #include <linux/regmap.h>
 #include <linux/types.h>
+#ifdef CONFIG_SEC_SVCLED
+#include <linux/sec_class.h>
+#endif
 
 #define TRILED_REG_TYPE			0x04
 #define TRILED_REG_SUBTYPE		0x05
@@ -35,6 +38,26 @@
 #define TRILED_NUM_MAX			3
 
 #define PWM_PERIOD_DEFAULT_NS		1000000
+
+#ifdef CONFIG_SEC_SVCLED
+typedef enum {
+	SVCLED_MIN = 0,
+	SVCLED_R = SVCLED_MIN,	/* RED   */
+	SVCLED_G,		/* GREEN */
+	SVCLED_B,		/* BLUE  */
+	SVCLED_MAX,
+} e_svcled_t;
+
+enum {
+	PATTERN_OFF = 0,
+	CHARGING,
+	CHARGING_ERR,
+	MISSED_NOTI,
+	LOW_BATTERY,
+	FULLY_CHARGED,
+	POWERING,
+};
+#endif
 
 struct pwm_setting {
 	u64	pre_period_ns;
@@ -60,6 +83,11 @@ struct qpnp_led_dev {
 	const char		*label;
 	const char		*default_trigger;
 	u8			id;
+#ifdef CONFIG_SEC_SVCLED
+	int			br_ratio_normal;	/* normal mode ratio   */
+	int			br_ratio_lpm;		/* lowpower mode ratio */
+	int			ratio;			/* final using ratio   */
+#endif
 	bool			blinking;
 	bool			breathing;
 };
@@ -70,6 +98,12 @@ struct qpnp_tri_led_chip {
 	struct qpnp_led_dev	*leds;
 	struct nvmem_device	*pbs_nvmem;
 	struct mutex		bus_lock;
+#ifdef CONFIG_SEC_SVCLED
+	struct device		*led_dev;
+	u8			lpm;	/* low power mode */
+	int			step;	/* partition step */
+	int			mode; /* led pattern */
+#endif
 	int			num_leds;
 	u16			reg_base;
 	u8			subtype;
@@ -395,6 +429,336 @@ static const struct attribute *breath_attrs[] = {
 	NULL
 };
 
+#ifdef CONFIG_SEC_SVCLED
+/**
+ * sysfs:sec_class service_led attribute control support
+ */
+/*calc br 1 per 0.1mA max 12mA*/
+static u8 calc_led_br(struct qpnp_tri_led_chip *chip, u8 ratio)
+{
+	u8 br_curr, br;
+
+	if (!ratio || !chip->step)
+		return 0;
+
+	if (ratio >= chip->step)
+		br = chip->step;
+	else
+		br = ratio;
+
+	br_curr = br * 0xff / chip->step;
+	br_curr = (br_curr > 0) ? br_curr : 1;
+
+	return br_curr;
+}
+
+static int secled_set(struct device *dev, e_svcled_t color,
+	u8 brightness, u32 on_ms, u32 off_ms)
+{
+	struct qpnp_tri_led_chip *chip = dev_get_drvdata(dev);
+	struct qpnp_led_dev *led;
+	int rc;
+
+	if (!chip)
+		return -EINVAL;
+
+	led = &chip->leds[color];
+	led->led_setting.breath = false;
+	if (!off_ms) {
+		led->led_setting.blink = false;
+		led->led_setting.on_ms = 0;
+		led->led_setting.off_ms = 0;
+	} else {
+		led->led_setting.blink = true;
+		led->led_setting.on_ms = on_ms;
+		led->led_setting.off_ms = off_ms;
+	}
+	led->led_setting.brightness = calc_led_br(chip, brightness);
+
+	rc = qpnp_tri_led_set(led);
+	if (rc < 0) {
+		dev_err(dev, "%s: color:%s br:0x%x mode:%s failed to set,%d\n",
+			__func__, led->label, brightness, (!off_ms ? "always" : "blink"), rc);
+		goto end;
+	}
+	dev_info(dev, "%s: color:%s br:0x%x mode:%s\n", __func__, led->label,
+		brightness, (!off_ms ? "always" : "blink"));
+end:
+	return rc;
+}
+
+static void secled_reset(struct qpnp_tri_led_chip *chip)
+{
+	int color;
+
+	for (color = SVCLED_R; color <= SVCLED_B; color++)
+		secled_set(chip->dev, color, LED_OFF, 0, 0);
+}
+
+static ssize_t led_r_store(struct device *dev,
+		struct device_attribute *devattr, const char *buf, size_t count)
+{
+	unsigned int brightness;
+	int rc;
+
+	rc = kstrtouint(buf, 0, &brightness);
+	if (rc) {
+		dev_err(dev, "%s: failed to get brightness,%d\n", __func__, rc);
+		return count;
+	}
+
+	secled_set(dev, SVCLED_R, brightness, 0, 0);
+	return count;
+}
+
+static ssize_t led_g_store(struct device *dev,
+		struct device_attribute *devattr, const char *buf, size_t count)
+{
+	unsigned int brightness;
+	int rc;
+
+	rc = kstrtouint(buf, 0, &brightness);
+	if (rc) {
+		dev_err(dev, "%s: failed to get brightness,%d\n", __func__, rc);
+		return count;
+	}
+
+	secled_set(dev, SVCLED_G, brightness, 0, 0);
+	return count;
+}
+
+static ssize_t led_b_store(struct device *dev,
+		struct device_attribute *devattr, const char *buf, size_t count)
+{
+	unsigned int brightness;
+	int rc;
+
+	rc = kstrtouint(buf, 0, &brightness);
+	if (rc) {
+		dev_err(dev, "%s: failed to get brightness,%d\n", __func__, rc);
+		return count;
+	}
+
+	secled_set(dev, SVCLED_B, brightness, 0, 0);
+	return count;
+}
+
+static ssize_t led_brightness_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct qpnp_tri_led_chip *chip = dev_get_drvdata(dev);
+
+	return scnprintf(buf, PAGE_SIZE, "red : %d green : %d blue : %d\n",
+			chip->leds[SVCLED_R].led_setting.brightness,
+			chip->leds[SVCLED_G].led_setting.brightness,
+			chip->leds[SVCLED_B].led_setting.brightness);
+}
+
+static ssize_t led_brightness_store(struct device *dev,
+		struct device_attribute *devattr, const char *buf, size_t count)
+{
+	struct qpnp_tri_led_chip *chip = dev_get_drvdata(dev);
+	u8 r_br, g_br, b_br;
+	int rc;
+
+	rc = sscanf(buf, "%d %d %d", &r_br, &g_br, &b_br);
+	if (!rc) {
+		dev_err(dev, "%s: failed to get brightness,%d\n", __func__, rc);
+		return count;
+	}
+
+	chip->lpm = 0;
+	dev_info(dev, "%s: 0x%x,0x%x,0x%x\n", __func__, r_br, g_br, b_br);
+	chip->leds[SVCLED_R].led_setting.brightness = r_br;
+	chip->leds[SVCLED_G].led_setting.brightness = g_br;
+	chip->leds[SVCLED_B].led_setting.brightness = b_br;
+
+	return count;
+}
+
+static ssize_t led_lowpower_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct qpnp_tri_led_chip *chip = dev_get_drvdata(dev);
+
+	return snprintf(buf, 4, "%d\n", chip->lpm);
+}
+
+static ssize_t led_lowpower_store(struct device *dev, struct device_attribute *devattr, const char *buf, size_t count)
+{
+	struct qpnp_tri_led_chip *chip = dev_get_drvdata(dev);
+	u8 temp;
+	int rc, color;
+
+	rc = kstrtou8(buf, 0, &temp);
+	if (rc) {
+		dev_err(dev, "%s : failed get lowpower,%d\n", __func__, rc);
+		return count;
+	}
+
+	chip->lpm = temp;
+	dev_info(dev, "%s: lowpower:%d\n", __func__, chip->lpm);
+
+	if (temp) {	/* low power mode */
+		for (color = SVCLED_MIN; color < SVCLED_MAX; color++)
+			chip->leds[color].ratio = chip->leds[color].br_ratio_lpm;
+	} else {	/* normal power mode */
+		for (color = SVCLED_MIN; color < SVCLED_MAX; color++)
+			chip->leds[color].ratio = chip->leds[color].br_ratio_normal;
+	}
+
+	return count;
+}
+
+static ssize_t led_blink_store(struct device *dev,
+		struct device_attribute *devattr, const char *buf, size_t count)
+{
+	struct qpnp_tri_led_chip *chip = dev_get_drvdata(dev);
+	u32 brightness, t_on, t_off;
+	u8 led[SVCLED_MAX];
+	int rc, color;
+
+	rc = sscanf(buf, "0x%8x %5d %5d", &brightness, &t_on, &t_off);
+	if (!rc) {
+		dev_err(dev, "%s: failed to get led_blink,%d\n", __func__, rc);
+		return count;
+	}
+
+	led[SVCLED_R] = ((brightness & 0xFF0000) >> 16);
+	led[SVCLED_G] = ((brightness & 0x00FF00) >> 8);
+	led[SVCLED_B] = ((brightness & 0x0000FF) >> 0);
+	dev_info(dev, "%s: RGB:0x%02x,0x%02x,0x%02x, on:%d, off:%d\n",
+			__func__, led[SVCLED_R], led[SVCLED_G], led[SVCLED_B], t_on, t_off);
+
+	secled_reset(chip);
+
+	if (!t_off) {
+		/*constant on*/
+		for (color = SVCLED_MIN; color < SVCLED_MAX; color++) {
+			if (led[color])
+				secled_set(dev, color, led[color], 0, 0);
+		}
+	} else {
+		/*blinking*/
+		for (color = SVCLED_MIN; color < SVCLED_MAX; color++) {
+			if (led[color])
+				secled_set(dev, color, led[color], t_on, t_off);
+		}
+	}
+
+	return count;
+}
+
+static ssize_t led_blink_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct qpnp_tri_led_chip *chip = dev_get_drvdata(dev);
+	struct qpnp_led_dev *led;
+	int color;
+	u8 led_power_status = 0;
+
+	for (color = SVCLED_MIN; color < SVCLED_MAX; color++) {
+		led = &chip->leds[color];
+
+		if (led->led_setting.brightness && !led->led_setting.blink) {/* led on */
+			led_power_status = 1;
+			break;
+		}
+	}
+
+	return sprintf(buf, "%u\n", led_power_status);
+}
+
+static ssize_t led_pattern_store(struct device *dev,
+		struct device_attribute *devattr, const char *buf, size_t count)
+{
+	struct qpnp_tri_led_chip *chip = dev_get_drvdata(dev);
+	struct qpnp_led_dev *led[SVCLED_MAX];
+	int rc, mode, color;
+
+	rc = sscanf(buf, "%1d", &mode);
+	if (!rc) {
+		dev_err(dev, "%s: failed to get led_pattern,%d\n", __func__, rc);
+		return count;
+	}
+	dev_info(dev, "%s: %d\n", __func__, mode);
+
+	secled_reset(chip);
+
+	for (color = SVCLED_MIN; color < SVCLED_MAX; color++) {
+		led[color] = &chip->leds[color];
+		led[color]->ratio = chip->lpm ? led[color]->br_ratio_lpm : led[color]->br_ratio_normal;
+	}
+
+	chip->mode = mode;
+
+	switch (mode) {
+	case CHARGING:
+		/* LED_R constant mode ON */
+		secled_set(dev, SVCLED_R, led[SVCLED_R]->ratio, 0, 0);
+		break;
+	case CHARGING_ERR:
+		/* LED_R slope mode ON (500ms to 500ms) */
+		secled_set(dev, SVCLED_R, led[SVCLED_R]->ratio, 500, 500);
+		break;
+	case MISSED_NOTI:
+		/* LED_B slope mode ON (500ms to 5000ms) */
+		secled_set(dev, SVCLED_B, led[SVCLED_B]->ratio, 500, 5000);
+		break;
+	case LOW_BATTERY:
+		/* LED_R slope mode ON (500ms to 5000ms) */
+		secled_set(dev, SVCLED_R, led[SVCLED_R]->ratio, 500, 5000);
+		break;
+	case FULLY_CHARGED:
+		/* LED_G constant mode ON */
+		secled_set(dev, SVCLED_G, led[SVCLED_G]->ratio, 0, 0);
+		break;
+	case POWERING:
+		/* LED_G & LED_B slope mode ON (1000ms to 1000ms) */
+		secled_set(dev, SVCLED_G, led[SVCLED_G]->ratio, 1000, 1000);
+		secled_set(dev, SVCLED_B, led[SVCLED_B]->ratio, 0, 0);
+		break;
+	case PATTERN_OFF:
+		break;
+	default:
+		break;
+	}
+
+	return count;
+}
+
+static ssize_t led_pattern_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct qpnp_tri_led_chip *chip = dev_get_drvdata(dev);
+
+	return sprintf(buf, "%u\n", chip->mode);
+}
+
+/* SAMSUNG specific attribute nodes */
+static DEVICE_ATTR_WO(led_r);
+static DEVICE_ATTR_WO(led_g);
+static DEVICE_ATTR_WO(led_b);
+static DEVICE_ATTR_RW(led_pattern);
+static DEVICE_ATTR_RW(led_blink);
+static DEVICE_ATTR_RW(led_brightness);
+static DEVICE_ATTR_RW(led_lowpower);
+
+static struct attribute *sec_led_attributes[] = {
+	&dev_attr_led_r.attr,
+	&dev_attr_led_g.attr,
+	&dev_attr_led_b.attr,
+	&dev_attr_led_pattern.attr,
+	&dev_attr_led_blink.attr,
+	&dev_attr_led_brightness.attr,
+	&dev_attr_led_lowpower.attr,
+	NULL,
+};
+
+static struct attribute_group sec_led_attr_group = {
+	.attrs = sec_led_attributes,
+};
+#endif
+
 static int qpnp_tri_led_register(struct qpnp_tri_led_chip *chip)
 {
 	struct qpnp_led_dev *led;
@@ -476,6 +840,9 @@ static int qpnp_tri_led_parse_dt(struct qpnp_tri_led_chip *chip)
 	struct pwm_args pargs;
 	const __be32 *addr;
 	int rc = 0, id, i = 0;
+#ifdef CONFIG_SEC_SVCLED
+	int temp;
+#endif
 
 	addr = of_get_address(chip->dev->of_node, 0, NULL, NULL);
 	if (!addr) {
@@ -515,6 +882,17 @@ static int qpnp_tri_led_parse_dt(struct qpnp_tri_led_chip *chip)
 	if (!chip->leds)
 		return -ENOMEM;
 
+#ifdef CONFIG_SEC_SVCLED
+		rc = of_property_read_u32(chip->dev->of_node, "step", &temp);
+		if (!rc) {
+			chip->step = temp;
+			dev_info(chip->dev, "step=%d\n", chip->step);
+		} else {
+			chip->step = 120;
+			dev_err(chip->dev, "Get step failed, rc=%d\n", rc);
+		}
+#endif
+
 	for_each_available_child_of_node(node, child_node) {
 		rc = of_property_read_u32(child_node, "led-sources", &id);
 		if (rc) {
@@ -535,6 +913,28 @@ static int qpnp_tri_led_parse_dt(struct qpnp_tri_led_chip *chip)
 		led->label =
 			of_get_property(child_node, "label", NULL) ? :
 							child_node->name;
+
+#ifdef CONFIG_SEC_SVCLED
+		rc = of_property_read_u32(child_node, "br_ratio_normal", &temp);
+		if (!rc) {
+			led->br_ratio_normal = temp & 0xff;
+			dev_info(chip->dev, "rto=%d\n", led->br_ratio_normal);
+		} else {
+			led->br_ratio_normal = chip->step; /* default set max */
+			dev_err(chip->dev, "Get br_ratio_normal failed, rc=%d\n",
+							rc);
+		}
+
+		rc = of_property_read_u32(child_node, "br_ratio_lpm", &temp);
+		if (!rc) {
+			led->br_ratio_lpm = temp & 0xff;
+			dev_info(chip->dev, "rto_low=%d\n", led->br_ratio_lpm);
+		} else {
+			led->br_ratio_lpm = chip->step / 2; /* default set half */
+			dev_err(chip->dev, "Get br_ratio_lpm failed, rc=%d\n",
+							rc);
+		}
+#endif
 
 		led->pwm_dev =
 			devm_of_pwm_get(chip->dev, child_node, NULL);
@@ -563,6 +963,8 @@ static int qpnp_tri_led_probe(struct platform_device *pdev)
 {
 	struct qpnp_tri_led_chip *chip;
 	int rc = 0;
+
+	pr_info("[LED] %s\n", __func__);
 
 	chip = devm_kzalloc(&pdev->dev, sizeof(*chip), GFP_KERNEL);
 	if (!chip)
@@ -601,7 +1003,26 @@ static int qpnp_tri_led_probe(struct platform_device *pdev)
 
 	dev_dbg(chip->dev, "Tri-led module with subtype 0x%x is detected\n",
 					chip->subtype);
+
+#ifdef CONFIG_SEC_SVCLED
+	chip->led_dev = sec_device_create(chip, "led");
+	if (unlikely(!chip->led_dev)) {
+		dev_err(chip->dev, "failed create sec_class led-dev\n");
+		goto destroy;
+	}
+
+	rc = sysfs_create_group(&chip->led_dev->kobj, &sec_led_attr_group);
+	if (rc) {
+		dev_err(chip->dev, "failed create sysfs:sec_led_attr\n");
+		goto free_device;
+	}
+#endif
 	return 0;
+
+#ifdef CONFIG_SEC_SVCLED
+free_device:
+	sec_device_destroy(chip->led_dev->devt);
+#endif
 destroy:
 	mutex_destroy(&chip->bus_lock);
 	dev_set_drvdata(chip->dev, NULL);
@@ -619,6 +1040,9 @@ static int qpnp_tri_led_remove(struct platform_device *pdev)
 		sysfs_remove_files(&chip->leds[i].cdev.dev->kobj, breath_attrs);
 		mutex_destroy(&chip->leds[i].lock);
 	}
+#ifdef CONFIG_SEC_SVCLED
+	sysfs_remove_group(&chip->led_dev->kobj, &sec_led_attr_group);
+#endif
 	dev_set_drvdata(chip->dev, NULL);
 	return 0;
 }

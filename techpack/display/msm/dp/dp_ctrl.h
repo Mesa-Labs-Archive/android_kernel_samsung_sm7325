@@ -32,6 +32,9 @@ struct dp_ctrl {
 			enum dp_stream_id strm,
 			u32 ch_start_slot, u32 ch_tot_slots);
 	void (*set_sim_mode)(struct dp_ctrl *dp_ctrl, bool en);
+#if defined(CONFIG_SEC_DISPLAYPORT)
+	bool (*get_link_train_status)(struct dp_ctrl *dp_ctrl);
+#endif
 };
 
 struct dp_ctrl_in {

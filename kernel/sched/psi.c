@@ -779,11 +779,11 @@ static struct psi_group *iterate_groups(struct task_struct *task, void **iter)
 		else
 			cgroup = cgroup_parent(*iter);
 
-		if (cgroup && cgroup_parent(cgroup)) {
+        if (cgroup && cgroup_parent(cgroup)) {
 			*iter = cgroup;
 			return cgroup_psi(cgroup);
 		}
-	}
+    }
 #endif
 	*iter = &psi_system;
 	return &psi_system;
