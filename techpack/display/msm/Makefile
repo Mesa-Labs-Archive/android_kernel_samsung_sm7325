@@ -175,6 +175,12 @@ msm_drm-$(CONFIG_DISPLAY_SAMSUNG) += samsung/PBA_BOOTING/ss_dsi_panel_PBA_BOOTIN
 
 msm_drm-$(CONFIG_PANEL_S6E3FC3_AMS646YD01_LO_FHD) += samsung/S6E3FC3_AMS646YD01_LO/ss_dsi_panel_S6E3FC3_AMS646YD01_LO.o
 
+ifdef CONFIG_SEC_M52XQ_PROJECT
+msm_drm-$(CONFIG_PANEL_SW83109_BF067XMM_FHD) += samsung/SW83109_BF067XMM/ss_dsi_panel_SW83109_BF067XMM.o
+msm_drm-$(CONFIG_PANEL_S6E3HAB_AMB667AN01_FHD) += samsung/S6E3HAB_AMB667AN01/ss_dsi_panel_S6E3HAB_AMB667AN01.o
+
+msm_drm-$(CONFIG_PANEL_S6E3FA9_AMB667UM36_FHD) += samsung/S6E3FA9_AMB667UM36/ss_dsi_panel_S6E3FA9_AMB667UM36.o
+endif
 
 msm_drm-$(CONFIG_DISPLAY_SAMSUNG) += samsung/ss_dsi_panel_sysfs.o \
 	samsung/ss_dsi_panel_debug.o \
