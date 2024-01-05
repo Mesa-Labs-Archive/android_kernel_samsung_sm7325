@@ -10,7 +10,7 @@
 	dtbo-hw_rev_end = <0x20>;
 
 	fragment@smd {
-		target-path = "/"
+		target-path = "/";
 
 		__overlay__ {
 
@@ -5662,7 +5662,7 @@
 	};
 
 	fragment@model {
-		target-path = "/"
+		target-path = "/";
 
 		__overlay__ {
 
